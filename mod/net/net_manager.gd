@@ -1,14 +1,5 @@
 extends Node
-## Multiplayer backbone for The Choicer Voicer.
-##
-## The base game is already turn-based: contestants record one at a time, and a
-## contestant's score is derived entirely from `round_plmic_data` (three small
-## PackedByteArrays). That means we never need realtime state sync -- we only
-## need to (a) agree on whose turn it is, (b) ship one performance per turn, and
-## (c) keep everyone on the same phase of the round.
-##
-## Topology: ENet client/server, host-authoritative. Host is always slot 0.
-## Server relay is on by default, so a client `rpc()` reaches every other peer.
+# ENet client/server, host authoritative. host is always slot 0.
 
 signal player_list_changed
 signal connection_failed(reason: String)
@@ -21,42 +12,29 @@ signal scores_received(scores: PackedInt32Array)
 const PORT: int = 7654
 const MAX_PLAYERS: int = 4
 const PROTOCOL_VERSION: int = 1
-## ENet fragments reliable packets for us, but keeping chunks well under the
-## default MTU budget avoids stalling the channel while a 500 KB take transfers.
 const CHUNK_SIZE: int = 24576
-## Nothing may block the match forever. If a peer crashes or alt-F4s, everyone
-## else carries on after these instead of freezing on a black screen.
 const PERFORMANCE_TIMEOUT: float = 60.0
 const BARRIER_TIMEOUT: float = 90.0
 
 
-## Everything here lands in user://logs/choicervoicer.log via file logging.
 func log_net(msg: String) -> void:
 	print("[NET %s] %s" % [Time.get_time_string_from_system(), msg])
 
 enum MODE {OFFLINE, HOST, CLIENT}
 
 var mode: MODE = MODE.OFFLINE
-## peer_id -> {name, pack, ready, manifest}
 var players: Dictionary = {}
-## slot index -> peer_id, rebuilt by the host on every roster change.
 var slot_map: PackedInt32Array = []
 
 var _perf_inbox: Dictionary = {}
 var _perf_staging: Dictionary = {}
 var _barriers: Dictionary = {}
-## Tags the host has already released this session. A peer that showed up after
-## the host stopped waiting used to recreate the entry the host had just erased,
-## and that ghost then satisfied the SAME tag on sight next time round.
+# tags already released. without this a latecomer recreates an entry nothing erases.
 var _barriers_done: Dictionary = {}
 
-## Bumped by the host for every show it starts, and adopted by everyone on the
-## way in. Round state is keyed by round number and contestant slot, and both of
-## those restart at zero, so with nothing to tell one show from the next the
-## leftovers of a finished match looked exactly like the new one: takes arrived
-## "already received", barriers opened on sight, and the second pack of the
-## evening played itself through. Every round-scoped RPC carries this stamp and
-## is dropped when it does not match.
+# bumped every show. round state is keyed by round number and slot, both of which
+# restart at zero, so without a stamp the leftovers of a finished match look
+# exactly like the new one.
 var session_id: int = 0
 
 
@@ -135,8 +113,6 @@ func leave() -> void:
 
 
 
-## Everything below is scoped to a single show and must not survive it. Leaving
-## any of it behind is what made the match after the first one unplayable.
 func _reset_session_state() -> void:
 	_perf_inbox.clear()
 	_perf_staging.clear()
@@ -149,9 +125,6 @@ func _reset_session_state() -> void:
 	_scores_waiting = false
 
 
-## Called on every machine as it enters a show: the host stamps a fresh id, the
-## followers adopt the host's. Doing it on the way IN as well as on the way out
-## means a crash, an alt-F4 or a missed exit cannot poison the next match.
 func begin_session(id: int = -1) -> void:
 	_reset_session_state()
 	if id >= 0: session_id = id
@@ -159,9 +132,6 @@ func begin_session(id: int = -1) -> void:
 	log_net("session %d begins" % session_id)
 
 
-## Called when a match or dub hands back to a menu. Retires the id so anything
-## still in flight from the show that just ended is discarded on arrival, and
-## clears the ready flags so the lobby is usable for the next pack.
 func end_session() -> void:
 	if not is_online(): return
 	log_net("session %d ends" % session_id)
@@ -219,7 +189,6 @@ func _on_connection_failed() -> void:
 	connection_failed.emit("Could not reach the host. Check the IP, the port, and that they are hosting.")
 
 
-## The host vanishing used to leave followers frozen mid-match with no way out.
 func _on_server_disconnected() -> void:
 	log_net("host closed the connection, returning to menu")
 	mode = MODE.OFFLINE
@@ -258,7 +227,7 @@ func _rebuild_slots() -> void:
 	if not is_host(): return
 	var ids: Array = players.keys()
 	ids.sort()
-	## Host always takes slot 0 so contestant 0 is the machine driving the show.
+	# host takes slot 0
 	ids.erase(1)
 	ids.push_front(1)
 	slot_map = PackedInt32Array(ids)
@@ -301,13 +270,9 @@ func everyone_ready() -> bool:
 
 
 
-## Fingerprint of the installed voice packs, so we can refuse to start a match
-## where players would be scored against clips they do not have.
 const CLIP_EXTENSIONS: PackedStringArray = ["wav", "mp3", "ogg"]
 
-## One hash per pack, over audio file names only. Captions, readmes and pack
-## icons differ harmlessly between installs, and packs nobody is playing are
-## irrelevant -- hashing all of it produced constant false mismatches.
+# audio file names only. hashing captions and pack icons gave constant false mismatches.
 func voice_pack_manifest() -> Dictionary:
 	var out: Dictionary = {}
 	var root: String = FileManager.MODPACKS_VOICE
@@ -326,9 +291,6 @@ func voice_pack_manifest() -> Dictionary:
 	return out
 
 
-## Advisory only -- the match is gated on the clips actually chosen, not this.
-## Reports the offending file names, because "different clips inside" tells a
-## player nothing about what to actually fix.
 func pack_differences(other: Dictionary) -> PackedStringArray:
 	var mine: Dictionary = voice_pack_manifest()
 	var diffs: PackedStringArray = []
@@ -389,8 +351,6 @@ func clear_round_performances() -> void:
 	_perf_staging.clear()
 
 
-## Called by the peer that just recorded. Ships the waveform data (used for
-## scoring) plus the raw take (so everyone can hear it) to every other peer.
 func submit_performance(slot: int, plmic: Dictionary, take: AudioStreamWAV) -> void:
 	var meta: Dictionary = _wav_meta(take)
 	var data: PackedByteArray = take.data
@@ -402,8 +362,6 @@ func submit_performance(slot: int, plmic: Dictionary, take: AudioStreamWAV) -> v
 	_rpc_perf_begin.rpc(sid, slot, plmic, meta)
 	var offset: int = 0
 	while offset < data.size():
-		## Bail if the show ended mid-upload -- the rest of these chunks would
-		## arrive during whatever comes next.
 		if not is_online() or session_id != sid: return
 		var end: int = mini(offset + CHUNK_SIZE, data.size())
 		_rpc_perf_chunk.rpc(sid, slot, data.slice(offset, end))
@@ -442,10 +400,6 @@ func _rpc_perf_end(sid: int, slot: int) -> void:
 	performance_received.emit(slot)
 
 
-## Blocks until the take for `slot` has fully arrived, or until that player is
-## gone. Never blocks forever -- a crashed peer used to freeze everybody.
-## `key` identifies the take (a contestant slot in match mode, a clip index in
-## dub mode). `owner_slot` says which player owes it, when that differs.
 func await_performance(slot: int, owner_slot: int = -1) -> Dictionary:
 	var waited: float = 0.0
 	var sid: int = session_id
@@ -456,8 +410,6 @@ func await_performance(slot: int, owner_slot: int = -1) -> Dictionary:
 			break
 		if not is_online():
 			break
-		## The show this take belonged to is over; whoever is still awaiting it
-		## is a leftover from it and must not block the new one.
 		if session_id != sid:
 			log_net("session ended while waiting for slot %d" % slot)
 			return {}
@@ -494,18 +446,12 @@ func _wav_from(meta: Dictionary, data: PackedByteArray) -> AudioStreamWAV:
 
 
 
-## Host scores every contestant so a float rounding difference on one machine
-## can never produce two different leaderboards.
 func publish_scores(scores: PackedInt32Array) -> void:
 	if not is_host(): return
 	_rpc_scores.rpc(session_id, scores)
 	scores_received.emit(scores)
 
 
-## Banked for the same reason as the end-of-round choice: the host finishes
-## scoring while a follower is still animating its way there, and a follower
-## that started awaiting the signal one frame too late waited for a round that
-## had already been decided.
 var _scores_inbox: PackedInt32Array = []
 var _scores_waiting: bool = false
 
@@ -518,7 +464,6 @@ func _rpc_scores(sid: int, scores: PackedInt32Array) -> void:
 	scores_received.emit(scores)
 
 
-## Returns an empty array if the show ends before the host scores the round.
 func await_scores() -> PackedInt32Array:
 	var sid: int = session_id
 	while not _scores_waiting:
@@ -530,16 +475,12 @@ func await_scores() -> PackedInt32Array:
 
 
 
-## Phase barrier: nobody leaves a round stage until every peer has arrived.
-## Keeps host dialogue, camera cuts and recording prompts lined up without
-## having to sync anything frame-by-frame.
 func barrier(tag: String) -> void:
 	if not is_online(): return
 	log_net("barrier '%s' reached" % tag)
 	var waited: float = 0.0
 	var sid: int = session_id
 	if is_host():
-		## Merge rather than assign -- a fast client can arrive before we do.
 		if not _barriers.has(tag): _barriers[tag] = {}
 		_barriers[tag][1] = true
 		while _barriers[tag].size() < players.size():
@@ -572,8 +513,6 @@ var _barrier_released: Dictionary = {}
 func _rpc_barrier_reached(sid: int, tag: String) -> void:
 	if not is_host(): return
 	if sid != session_id: return
-	## Already released. Recording the latecomer would leave an entry nothing
-	## ever erases, and every barrier tag repeats verbatim in the next match.
 	if _barriers_done.has(tag): return
 	if not _barriers.has(tag): _barriers[tag] = {}
 	_barriers[tag][multiplayer.get_remote_sender_id()] = true
@@ -587,22 +526,14 @@ func _rpc_barrier_release(sid: int, tag: String) -> void:
 
 
 
-## The show is driven by the host's clicks. Dialogue, skips and the end-of-round
-## menu never advance on their own, so without this every machine would sit on a
-## different sentence until the next barrier yanked it forward.
 signal dialogue_state(idx: int, active: bool, revealed: bool)
 signal dialogue_skip
 signal match_skip
 signal end_round_choice(choice: int)
 
-## True when this peer is only allowed to watch the host drive the show.
 func is_spectator() -> bool: return is_online() and not is_host()
 
 
-## Sends the host's resulting dialogue position rather than the click itself.
-## A click means different things depending on how far the typewriter has got
-## locally, so replaying the click elsewhere can strand a follower one line
-## behind for the rest of the match.
 func broadcast_dialogue_state(idx: int, active: bool, revealed: bool) -> void:
 	if is_online(): _rpc_dialogue_state.rpc(session_id, idx, active, revealed)
 
@@ -630,10 +561,6 @@ func _rpc_match_skip(sid: int) -> void:
 	match_skip.emit()
 
 
-## Queued rather than delivered by signal alone. A follower reaches the
-## end-of-round menu a moment after the host does -- it is still writing its
-## takes to disk -- and a choice made in that window used to vanish, leaving it
-## parked on the results screen for the rest of the evening.
 var _end_round_queue: Array[int] = []
 
 
@@ -647,8 +574,6 @@ func _rpc_end_round_choice(sid: int, choice: int) -> void:
 	end_round_choice.emit(choice)
 
 
-## Followers take the host's choices from here, one per press, in order.
-## Returns -1 if the show ends while waiting.
 func await_end_round_choice() -> int:
 	var sid: int = session_id
 	while _end_round_queue.is_empty():
@@ -659,9 +584,6 @@ func await_end_round_choice() -> int:
 
 
 
-## Dub mode: players take turns dubbing alternating clips, then everyone
-## watches the finished dub together. The pack is rebuilt from its folder on
-## each machine; only the clip ORDER needs syncing, since the host may shuffle.
 signal dub_should_start(folder: String, clip_paths: PackedStringArray)
 signal dub_begin
 signal dub_watch(playing: bool)
@@ -679,9 +601,6 @@ func _rpc_start_dub(sid: int, folder: String, clip_paths: PackedStringArray) -> 
 	dub_should_start.emit(folder, clip_paths)
 
 
-## Banked, because the host can press Begin while a follower's dub scene is
-## still loading. A missed start left that follower sitting on the idle screen
-## with no button to press.
 var _dub_begin_pending: bool = false
 
 
@@ -695,7 +614,6 @@ func _rpc_dub_begin(sid: int) -> void:
 	dub_begin.emit()
 
 
-## True once, for a dub scene that came up after the host had already started.
 func take_pending_dub_begin() -> bool:
 	var pending: bool = _dub_begin_pending
 	_dub_begin_pending = false
@@ -718,7 +636,6 @@ func _on_dub_should_start(folder: String, clip_paths: PackedStringArray) -> void
 		_abort_to_menu("Cannot start: you don't have the dub pack '%s'." % folder.trim_suffix("/").get_file())
 		return
 
-	## Rebuild the host's exact clip order -- they may have shuffled or sorted.
 	var by_path: Dictionary = {}
 	for c: OmniClip in res.omni_clip_array.data: by_path[c.self_global_path] = c
 	var ordered: Array[OmniClip] = []
@@ -745,23 +662,15 @@ func _abort_to_menu(reason: String) -> void:
 
 
 
-## Turn the network roster into the session data the match scene already reads,
-## so `GENERIC_setup_from_metro()` works unchanged.
 func apply_roster_to_metro() -> void:
 	var members: Array[BasicPlayerPackage] = []
 	for slot: int in slot_map.size():
 		var peer: int = slot_map[slot]
 		var pack: String = players.get(peer, {}).get("pack", "")
-		## Device name is unused online -- each machine records on its own mic.
 		members.append(BasicPlayerPackage.new(pack, ""))
 	Metro.current_players = members
 
 
-## The host shuffles the clip order, so clients cannot regenerate it. They
-## rebuild the exact same set from the host's file paths instead.
-## Returns the clips this machine could not find. Skipping them silently used
-## to leave a follower with fewer rounds than the host, which crashed as soon as
-## the host advanced past the end of the follower's shorter list.
 func rebuild_clip_set(paths: PackedStringArray) -> PackedStringArray:
 	var clips: Array[OmniClip] = []
 	var missing: PackedStringArray = []
@@ -780,8 +689,6 @@ func _ready() -> void:
 
 
 func _on_match_should_start(clip_paths: PackedStringArray) -> void:
-	## The host is already inside its own menu flow and will start the match
-	## itself; only followers need to be pushed into the match scene.
 	if is_host(): return
 	var missing: PackedStringArray = rebuild_clip_set(clip_paths)
 	if not missing.is_empty():

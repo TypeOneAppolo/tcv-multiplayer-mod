@@ -1,12 +1,9 @@
 --- a/scenes/gameplay/dub_mode/main/dub_mode.gd
 +++ b/scenes/gameplay/dub_mode/main/dub_mode.gd
-@@ -60,6 +60,21 @@
+@@ -60,6 +60,18 @@
  var resource: GameplayResourceDubMode
  
  
-+## Online, clips alternate between players: clip 0 to slot 0, clip 1 to slot 1,
-+## and so on. You record on your own clips and receive everyone else's, so by
-+## the finish every machine holds the complete dub.
 +var net_dub: bool = false
 +var my_dub_slot: int = 0
 +var dub_player_count: int = 1
@@ -22,7 +19,7 @@
  var performance_array: Array[OmniClipMemberInstance]
  var unperformance_array: Array[OmniClipMemberInstance]
  
-@@ -92,7 +107,7 @@
+@@ -92,7 +104,7 @@
  	AudioServer.set_bus_mute(VolumeService.BUS_VCLIP, Profile.dub_mode_hard_mute_clips and !performing_finished)
  	AudioServer.set_bus_mute(VolumeService.BUS_PLAYBACK, Profile.dub_mode_hard_mute_clips)
  	lbl_caption.visible = ( !Profile.dub_mode_hard_no_captions and !performing_finished)
@@ -31,7 +28,7 @@
  	player_backing_track.volume_linear = float( !Profile.dub_mode_mute_backing_track) * float(performing_finished)
  
  
-@@ -108,6 +123,7 @@
+@@ -108,6 +120,7 @@
  
  
  func _begin_from_idle() -> void :
@@ -39,15 +36,13 @@
  	remote_buttons.show()
  	btn_begin.hide()
  
-@@ -132,6 +148,45 @@
+@@ -132,6 +145,43 @@
  	lbl_caption.modulate.a = 0.0;lbl_caption.text = active_clip.clip_caption; var tween: Tween = create_tween();tween.tween_property(lbl_caption, "modulate:a", 1.0, 0.5)
  	_buttons_toggle_array(previous_buttons_state)
  	_update_from_difficulty_toggles()
 +	if net_dub and not _is_my_clip(index): _await_remote_clip(index)
 +
 +
-+## Somebody else's clip: sit out, then fold their take into our own copy so the
-+## final watch-through plays every player's lines.
 +func _await_remote_clip(index: int) -> void :
 +	_buttons_disable_all()
 +	var who: String = Net.player_name_for_slot(_owner_slot_of_clip(index))
@@ -85,7 +80,7 @@
  func _hear_again() -> void :
  	if !audio_interface_manager.idled.is_connected(_end_again): audio_interface_manager.idled.connect(_end_again)
  	audio_interface_manager.again()
-@@ -177,6 +232,11 @@
+@@ -177,6 +227,11 @@
  	this_member_instance.write_vclip_data_from_aggregate(audio_interface_manager.spectrum_aggregate_vclip)
  	this_member_instance.write_plmic_data_from_aggregate(audio_interface_manager.spectrum_aggregate_plmic)
  	this_member_instance.shared_omniclip.attempt_to_mark_as_seen()
@@ -97,7 +92,7 @@
  	clip_index += 1
  	if clip_index >= performance_array.size():
  		_enter_finish()
-@@ -229,6 +289,12 @@
+@@ -229,6 +284,12 @@
  	MicrophoneService.disable()
  func _ready() -> void :
  	resource = Metro.gameplay_resource_dub_mode
@@ -110,22 +105,18 @@
  	_connect_signals()
  	_setup_performance_array()
  	_enable_buttons()
-@@ -243,6 +309,10 @@
+@@ -243,6 +304,7 @@
  	video_player_static.show()
  	video_player_static.play()
  	MicrophoneService.warmup()
-+	## The host can press Begin while this scene is still loading, in which case
-+	## the signal fired before we were listening for it. Deferred so the @onready
-+	## buttons this touches are all in place.
 +	if net_dub and Net.take_pending_dub_begin(): _begin_from_idle.call_deferred()
  
  
  
-@@ -314,7 +384,18 @@
+@@ -314,7 +376,17 @@
  
  
  
-+## Everyone watches the finished dub together, driven by whoever pressed play.
  func watch() -> void :
 +	if not Net.is_spectator(): Net.broadcast_dub_watch(true)
 +	_do_watch()
@@ -140,7 +131,7 @@
  	clear_playing_clips()
  	var performance_fusion: Array[OmniClipMemberInstance] = []
  	performance_fusion.append_array(performance_array)
-@@ -340,6 +421,11 @@
+@@ -340,6 +412,11 @@
  
  func clear_playing_clips() -> void : for timer: Timer in replay_streams.get_children(): timer.queue_free()
  func stop() -> void :
@@ -152,7 +143,7 @@
  	clear_playing_clips()
  	results.show()
  	if video_stream_player.is_playing(): video_stream_player.stop()
-@@ -366,4 +452,15 @@
+@@ -366,5 +443,11 @@
  func actually_exit() -> void :
  	AudioServer.set_bus_mute(VolumeService.BUS_VCLIP, false)
  	AudioServer.set_bus_mute(VolumeService.BUS_PLAYBACK, false)
@@ -161,11 +152,6 @@
 +	if not net_dub or not Net.is_online():
 +		M.world.return_to_dub_selection()
 +		return
-+	## Retire the session on the way out. Takes are filed by clip index, and the
-+	## next dub counts from zero again -- leaving the old ones in the inbox made
-+	## every clip somebody else owned arrive "already dubbed", so the second pack
-+	## fast-forwarded through itself playing the first pack's audio.
 +	Net.end_session()
-+	## Only the host picks the pack; followers wait in the lobby for it.
 +	if Net.is_host(): M.world.return_to_dub_selection()
 +	else: M.world.CreateLobby()

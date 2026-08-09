@@ -1,15 +1,8 @@
 extends Control
-## Online lobby. Builds its own UI in code so the mod adds no hand-edited
-## .tscn files to the recovered project.
-##
-## Flow: host opens a lobby -> friends join by IP -> host presses Start, which
-## drops the host into the normal clip-selection menu. When the host confirms a
-## clip set, Net broadcasts it and every machine enters the match together.
 
 const ROW_HEIGHT: int = 34
 const KOFI_URL: String = "https://ko-fi.com/appolodev"
 const GAMEBANANA_URL: String = "https://gamebanana.com/mods/702231"
-## Gap between the support block and the bottom right corner of the screen.
 const SUPPORT_INSET: Vector2 = Vector2(48, 32)
 
 var name_field: LineEdit
@@ -30,16 +23,13 @@ var support_box: VBoxContainer
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	_build_ui()
-	## CONNECT_DEFERRED matters here. These fire from inside the multiplayer
-	## poll, and rebuilding the player list (freeing and adding nodes) during
-	## that can take the engine down with no GDScript error to show for it.
+	# deferred: these fire from inside the multiplayer poll, and rebuilding the
+	# player list there takes the engine down with no error to show for it.
 	Net.player_list_changed.connect(_refresh, CONNECT_DEFERRED)
 	Net.connection_failed.connect(_on_error, CONNECT_DEFERRED)
 	Net.connected_to_lobby.connect(func() -> void: _set_status("Connected. Waiting for the host."))
 	Net.server_disconnected.connect(func() -> void: _on_error("Host closed the lobby."))
 	_refresh()
-	## Reached between shows rather than opened fresh -- everyone lands back here
-	## when a match or dub finishes, ready for the host to pick the next pack.
 	if Net.is_online():
 		if Net.is_host(): _set_status("Lobby still open. Choose the next pack when everyone is ready.")
 		else: _set_status("Connected. Waiting for the host to pick the next pack.")
@@ -66,8 +56,6 @@ func _build_ui() -> void:
 	title.add_theme_font_size_override("font_size", 32)
 	column.add_child(title)
 
-	## Defaulting to the character pack name meant everyone showed up as
-	## "Default" or "Player". The Windows account name is a far better guess.
 	var default_name: String = OS.get_environment("USERNAME")
 	if default_name.is_empty(): default_name = "Player"
 	name_field = _labeled_field(column, "Your name", default_name)
@@ -129,16 +117,9 @@ func _build_ui() -> void:
 	_build_support_footer()
 
 
-## Pinned to the bottom right corner of the screen, positioned by hand rather
-## than by anchors. Nothing ever gives this Control a size -- world.gd hangs the
-## lobby off PrimaryCapsule, a plain Node, so the anchor preset in _ready() has
-## no parent rect to resolve against and our rect stays 0x0. Anchoring anything
-## to "the bottom" therefore lands it at the top left on top of the form, which
-## is exactly what happened the first time. The column above gets away with it
-## because MarginContainer falls back to its own minimum size.
-##
-## Text is hard wrapped for the same reason: an autowrapping label in a 0-width
-## parent wraps to one word per line.
+# placed by hand off the viewport, not by anchors. world.gd hangs the lobby off
+# PrimaryCapsule, a plain Node, so the anchor preset never resolves and this
+# Control stays 0x0 -- anchor anything to the bottom and it lands top left.
 func _build_support_footer() -> void:
 	support_box = VBoxContainer.new()
 	support_box.add_theme_constant_override("separation", 6)
@@ -160,8 +141,6 @@ func _build_support_footer() -> void:
 	links.add_child(_link_button("Upvote on GameBanana", GAMEBANANA_URL))
 
 	_place_support_box()
-	## Sizes are not final until the containers have had their layout pass, and
-	## the corner moves if the window ever changes resolution.
 	support_box.minimum_size_changed.connect(_place_support_box)
 	get_viewport().size_changed.connect(_place_support_box)
 	_place_support_box.call_deferred()
@@ -170,8 +149,6 @@ func _build_support_footer() -> void:
 func _place_support_box() -> void:
 	if not is_instance_valid(support_box): return
 	support_box.size = support_box.get_combined_minimum_size()
-	## Global and local coords are the same thing here -- the lobby sits at the
-	## canvas origin, which is also why the column reads as top left aligned.
 	support_box.position = get_viewport_rect().size - support_box.size - SUPPORT_INSET
 
 
@@ -226,11 +203,9 @@ func _on_start() -> void:
 		return
 	Net.apply_roster_to_metro()
 	M.session_type = M.SESSION_TYPE.STANDARD
-	## Reuses the game's own clip-selection flow; initiate_session() broadcasts.
 	M.world.CreateSameLobby([])
 
 
-## Dub mode: players alternate clips, then watch the finished dub together.
 func _on_start_dub() -> void:
 	if not Net.is_host(): return
 	if Net.slot_count() < 2:
@@ -280,15 +255,12 @@ func _refresh() -> void:
 		if peer == 1: marks.append("host")
 		if peer == Net.my_id(): marks.append("you")
 		if record.get("ready", false): marks.append("ready")
-		## Clamp -- people pick very long names and the window cannot resize.
 		var shown: String = str(record.get("name", "?")).substr(0, 28)
 		row.text = "%d.  %s   [%s]" % [slot + 1, shown, ", ".join(marks)]
 		row.clip_text = true
 		player_rows.add_child(row)
 
 	if online:
-		## Advisory only -- differences matter solely for clips you actually
-		## play, and that is checked precisely when the host confirms a set.
 		var mismatched: PackedStringArray = Net.mismatched_players()
 		if mismatched.is_empty(): warning_label.text = ""
 		else:

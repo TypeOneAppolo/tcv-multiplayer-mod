@@ -1,7 +1,5 @@
 extends Node
-## TEMPORARY headless network smoke test. Does nothing unless the game is
-## launched with a role argument, e.g.  godot --headless -- host
-## Delete this file and its autoload entry once the mod is stable.
+# dev tool, not shipped. run two copies with -- host and -- client.
 
 func _ready() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
@@ -42,8 +40,6 @@ func _run_host() -> void:
 	Net.publish_scores(PackedInt32Array([4, 2]))
 	print("NETTEST | host published scores")
 
-	## Second show, reusing slot 0 and barrier tag "t1" exactly as a second pack
-	## does. Nothing from the first one may still be sitting in the inbox.
 	await get_tree().create_timer(2.0).timeout
 	Net.end_session()
 	await get_tree().create_timer(1.0).timeout
@@ -84,9 +80,6 @@ func _run_client() -> void:
 	var scores: PackedInt32Array = await Net.await_scores()
 	print("NETTEST | client received scores=%s" % str(scores))
 
-	## Second show. The regression this guards: slot 0 and barrier tag "t1" are
-	## reused verbatim, so if either survived the first session the client sails
-	## straight through with the first session's 120000-byte take.
 	var first_session: int = Net.session_id
 	while Net.session_id == first_session: await get_tree().process_frame
 	print("NETTEST | client entered session %d" % Net.session_id)

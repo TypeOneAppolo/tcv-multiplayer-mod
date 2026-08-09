@@ -1,7 +1,5 @@
 extends Node
-## TEMPORARY build check. Registered as the last autoload so every other
-## autoload identifier resolves, then compiles every .gd in the project.
-## Delete this file and its autoload entry once the mod is stable.
+# dev tool, not shipped. register as the last autoload to compile every .gd.
 
 func _ready() -> void:
 	var failures: Array[String] = []

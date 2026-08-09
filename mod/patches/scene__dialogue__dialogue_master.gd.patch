@@ -1,28 +1,20 @@
 --- a/scene/dialogue/dialogue_master.gd
 +++ b/scene/dialogue/dialogue_master.gd
-@@ -25,6 +25,9 @@
+@@ -25,6 +25,8 @@
  func _ready():
  	dialogue_box.visible = false
  	dot.modulate.a = 0.0
-+	## Online the host's clicks drive everyone's dialogue box.
 +	Net.dialogue_state.connect(SyncDialogueState)
 +	Net.dialogue_skip.connect(EndBatchNow)
  
  
  func _physics_process(_delta):
-@@ -35,11 +38,72 @@
+@@ -35,11 +37,58 @@
  func _input(event):
  	if enabled:
  		if (event.is_action_pressed("ui_accept") or event.is_action_pressed("ui_mouse1")) and accepting_user_input:
-+			## Only the host may advance an online show, otherwise each machine
-+			## ends up on a different sentence.
 +			if Net.is_spectator(): return
-+			## Never broadcast a click made outside a dialogue, or followers
-+			## would bank advances that skip their next batch.
 +			if not dialogue_active: return
-+			## Describe what this click is about to do BEFORE doing it. Applying
-+			## it can synchronously resume the match coroutine, which may open a
-+			## fresh batch and overwrite the state we meant to send.
  			if dialogue_label.visible_ratio < 1.0:
 -				ProcessRevealText(true)
 -				batch_sentence_finished.emit()
@@ -34,9 +26,6 @@
 +			Advance()
 +
 +
-+## The most recent host position that arrived before this machine had opened
-+## its dialogue box. Applied as soon as the batch starts, so a follower catches
-+## up instead of sitting there waiting for a click that already happened.
 +var pending_state: Array = []
 +
 +
@@ -49,7 +38,6 @@
 +		NextSentence()
 +
 +
-+## Snap this machine to the host's exact dialogue position.
 +func SyncDialogueState(idx: int, active: bool, revealed: bool) -> void :
 +	if not dialogue_active:
 +		pending_state = [idx, active, revealed]
@@ -57,7 +45,6 @@
 +	if not active:
 +		EndBatchNow()
 +		return
-+	## Guarded loop -- never trust a remote index to terminate this on its own.
 +	var steps: int = 0
 +	while sentence_index < idx and dialogue_active and steps < 128:
 +		steps += 1
@@ -74,8 +61,6 @@
 +	SyncDialogueState(s[0], s[1], s[2])
 +
 +
-+## Ends the current batch regardless of `accepting_user_input`. The plain
-+## Skip() respects that flag, which could leave a follower stuck forever.
 +func EndBatchNow() -> void :
 +	if not dialogue_active: return
 +	dialogue_active = false
@@ -86,13 +71,10 @@
  
  
  
-@@ -68,6 +132,10 @@
+@@ -68,7 +117,8 @@
  	sentence_index = 0
  	sentence_batch = batch
  	NewSentence(sentence_index)
-+	## Deferred on purpose. A banked state can end this batch immediately, and
-+	## emitting entire_batch_finished from inside NewBatch would fire before
-+	## HD() has started awaiting it -- the signal is missed and the match hangs.
 +	if not pending_state.is_empty(): ApplyPendingState.call_deferred()
  
  
