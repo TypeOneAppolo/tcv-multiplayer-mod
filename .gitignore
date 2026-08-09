@@ -1,0 +1,20 @@
+# Nothing derived from the game may ever be committed. The decompiled project
+# and the built executable are the game itself; they stay on your machine.
+work/
+.cache/
+*.exe
+*.pck
+*.zip
+*.tpz
+
+# Godot
+.godot/
+.import/
+export_presets.cfg.user
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+*.log

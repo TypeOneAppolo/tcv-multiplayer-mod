@@ -1,0 +1,221 @@
+--- a/scene/match/match_master_base.gd
++++ b/scene/match/match_master_base.gd
+@@ -52,6 +52,10 @@
+ 
+ 
+ var skip_triggered: bool = false
++## Set once this match is on its way out. The scene takes a blackout's worth of
++## time to be freed, and the round loop would otherwise use that window to start
++## the next round on top of the menu that is already loading.
++var net_show_over: bool = false
+ var reset_skip: Callable = func() -> bool:
+ 	skip_triggered = false
+ 	return false
+@@ -74,6 +78,8 @@
+ 
+ func _input(event) -> void :
+ 	if event.is_action_pressed("skip_current_sentence_batch"):
++		if Net.is_spectator(): return
++		Net.broadcast_dialogue_skip()
+ 		dialogue_master.Skip()
+ 
+ 
+@@ -109,10 +115,16 @@
+ 	statsteen.vamba = Metro.gameplay_omniclip_set
+ 
+ 
+-	for c: BasicPlayerPackage in Metro.current_players:
++	for i: int in Metro.current_players.size():
++		var c: BasicPlayerPackage = Metro.current_players[i]
+ 		var new_conte: = ContestantResource.new()
+ 		new_conte.set_from_directory(c.pack_reference_name)
+ 		new_conte.audio_input_device = c.input_device_name
++		## Online the podium should name the person playing, not whatever the
++		## character pack happens to be called (every default pack is "Player").
++		if Net.is_online():
++			var net_name: String = Net.player_name_for_slot(i)
++			if net_name: new_conte.name = net_name
+ 		conte_slots.append(new_conte)
+ 	statsteen.contestant_count = Metro.current_players.size()
+ 	sp = (Metro.current_players.size() == 1)
+@@ -163,6 +175,7 @@
+ 		match_progress.get_node("Vertical/MultiplayerTrackers").add_child(new_progress)
+ 
+ 	match_buttons.ButtonsVisibility(true, true, false)
++	Net.match_skip.connect(ApplyMatchSkip)
+ func GENERIC_scene_model_setup() -> void :
+ 	if M.data.custom.studio != "Default":
+ 		var filepath: String
+@@ -235,7 +248,8 @@
+ 		if tween: tween.kill()
+ 		tween = contestant_view_overlay.create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+ 
+-		if sp:
++		## Online there is one mic per machine, so slots do not map to devices.
++		if sp or Net.is_online():
+ 			if AudioServer.input_device != Profile.audio_device_in: AudioServer.input_device = Profile.audio_device_in
+ 		else:
+ 			if AudioServer.input_device != c.audio_input_device: AudioServer.input_device = c.audio_input_device
+@@ -253,10 +267,40 @@
+ 		if match_buttons.match_menu.visible: await match_buttons.match_menu_closed
+ 		c.round_waveform_image = ImageTexture.create_from_image(record_master.WaveformImage())
+ 
++	## In a networked match only the peer that owns this slot opens its mic.
++	## Everyone else watches the clip play, waits for that peer's take to land,
++	## then feeds it into the waveform exactly as if it had been recorded here.
++	var remote_contestant_turn = func(i: int):
++
++		var c: = conte_slots[i]
++		camera_master.VclipMain();record_master.ClearPlmicData()
++		contestant_view_overlay.position.x = 1153;contestant_view_overlay.show()
++		camera_master.ConPerformance(i)
++		record_master.ReplayJustVclip()
++
++		var perf: Dictionary = await Net.await_performance(i)
++		if perf.is_empty(): return
++
++		c.round_plmic_data = perf["plmic"]
++		record_master.wave_control.set_plmic_data(perf["plmic"])
++		c.stream_player.stream = perf["wav"]
++		if match_buttons.match_menu.visible: await match_buttons.match_menu_closed
++		c.round_waveform_image = ImageTexture.create_from_image(record_master.WaveformImage())
++
++	var networked_contestant_turn = func(i: int):
++		if Net.is_my_slot(i):
++			await individual_contestant_turn.call(i)
++			await Net.submit_performance(i, conte_slots[i].round_plmic_data, conte_slots[i].stream_player.stream)
++		else:
++			await remote_contestant_turn.call(i)
++		await Net.barrier("record_%d_%d" % [dynasteen.round, i])
++
++	if Net.is_online(): Net.clear_round_performances()
++
+ 	if sp: await get_tree().create_timer(1.0).timeout
+ 	else: await get_tree().create_timer(1.25).timeout
+ 	for i in range(statsteen.contestant_count):
+-		if sp:
++		if sp and not Net.is_online():
+ 			await individual_contestant_turn.call(0)
+ 		else:
+ 
+@@ -268,7 +312,30 @@
+ 			VolumeService.tween_volume_music_and_chatter(VOLUME_REDUCED, 1.0)
+ 			await HD(DialogueInjection(config_host.match_multiplayer.round.a_get_ready), HM.POPIN, HM.POPOUT)
+ 			VolumeService.tween_volume_music_and_chatter(VOLUME_MUTED, 1.0)
+-			await individual_contestant_turn.call(i)
++			if Net.is_online(): await networked_contestant_turn.call(i)
++			else: await individual_contestant_turn.call(i)
++
++
++## Scores are computed on the host alone and pushed to everyone. The scoring
++## input (`round_plmic_data`) is identical on every machine, but doing the float
++## work once removes any chance of two players seeing different leaderboards.
++var net_scores: PackedInt32Array = []
++
++func NET_sync_scores() -> void :
++	if not Net.is_online(): return
++	if Net.is_host():
++		var scorer: = Scorer.new()
++		var out: PackedInt32Array = []
++		for c: ContestantResource in conte_slots:
++			if M.session_type == M.SESSION_TYPE.STANDARD_JABRONI:
++				out.append(randi_range(0, 5))
++			else:
++				var scoref: float = scorer.tweaker_freaker(current_vclip.round_data, c.round_plmic_data, 0.85)
++				out.append(clampi(roundi(scoref), 0, 6))
++		net_scores = out
++		Net.publish_scores(out)
++	else:
++		net_scores = await Net.await_scores()
+ 
+ 
+ func GENERIC_Skippable_RF_ContestantPerformancePlayback() -> void :
+@@ -483,15 +550,30 @@
+ 	match_buttons.ButtonsVisibility(true, false, true, false, statsteen.contestant_count)
+ 	while true:
+ 		stop_talk.call()
+-		var selection: ERB = await match_buttons.button_index
++		## The host picks for the table, so replays and "next round" happen on
++		## every machine at the same moment.
++		var selection: ERB
++		if Net.is_spectator():
++			var remote_choice: int = await Net.await_end_round_choice()
++			## Below zero means the show ended underneath us -- the host left, or
++			## the connection went. Whoever tore it down is already sending this
++			## machine somewhere sensible.
++			if remote_choice < 0:
++				net_show_over = true
++				return
++			selection = remote_choice as ERB
++		else:
++			selection = await match_buttons.button_index
++			Net.broadcast_end_round_choice(selection)
+ 		if selection == ERB.FINISH:
+ 
+ 			current_vclip.stream_player.stop()
+ 			GENERIC_IRF_StopAllContestants()
+ 			if exit_when_done:
++				net_show_over = true
+ 				GENERIC_IRF_FinishMatch()
+ 				M.data.settings.volume = match_buttons.theseus_volume
+-				await M.world.CreateMenu()
++				await NET_leave_show(false)
+ 				await get_tree().create_timer(10.0).timeout
+ 			VolumeService.tween_volume_music_and_chatter(VOLUME_FULL, 1.0)
+ 			break
+@@ -500,11 +582,12 @@
+ 			current_vclip.stream_player.stop()
+ 			GENERIC_IRF_StopAllContestants()
+ 			if exit_when_done:
++				net_show_over = true
+ 				GENERIC_IRF_FinishMatch()
+ 
+ 				var lobby: Array = []
+ 				for c: ContestantResource in conte_slots: lobby.append(BasicPlayerPackage.new(c.directory, c.audio_input_device))
+-				await M.world.CreateSameLobby(lobby)
++				await NET_leave_show(true, lobby)
+ 				await get_tree().create_timer(10.0).timeout
+ 			VolumeService.tween_volume_music_and_chatter(VOLUME_FULL, 1.0)
+ 			break
+@@ -525,6 +608,28 @@
+ 					ERB.P4B: conte_slots[3].play_pecho();current_vclip.stream_player.play()
+ 		await get_tree().process_frame
+ 
++## Where a finished show hands back to. Retiring the session here is what lets a
++## second pack be played without restarting the game: the round barriers and the
++## received takes are all keyed by round and slot, and both of those start again
++## from zero.
++##
++## The clip picker belongs to the host alone. A follower dropped into it could
++## confirm a set of its own and start a private match while still connected,
++## which is how one machine ended up several clips ahead of everyone else.
++## Followers go back to the online lobby and wait for the host's next pack.
++func NET_leave_show(same_players: bool, lobby: Array = []) -> void :
++	if not Net.is_online():
++		if same_players: await M.world.CreateSameLobby(lobby)
++		else: await M.world.CreateMenu()
++		return
++	Net.end_session()
++	if Net.is_host():
++		if same_players: await M.world.CreateSameLobby(lobby)
++		else: await M.world.CreateMenu()
++	else:
++		await M.world.CreateLobby()
++
++
+ func GENERIC_IRF_StopAllContestants() -> void :
+ 	current_vclip.stream_player.stop()
+ 	for c: ContestantResource in conte_slots:
+@@ -570,6 +675,12 @@
+ 
+ 
+ func _on_match_buttons_skip():
++	if Net.is_spectator(): return
++	Net.broadcast_match_skip()
++	ApplyMatchSkip()
++
++
++func ApplyMatchSkip() -> void :
+ 	skip_triggered = true
+ 	if conte_talk_audio.playing: conte_talk_audio.stop()
+ 	dialogue_master.Skip()

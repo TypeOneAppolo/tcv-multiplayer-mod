@@ -1,0 +1,24 @@
+--- a/scenes/nav_specific/clip_selector_menus/clip_selection_dub.gd
++++ b/scenes/nav_specific/clip_selector_menus/clip_selection_dub.gd
+@@ -37,6 +37,21 @@
+ 
+ 
+ func initiate_session() -> void :
++	## Followers never start anything -- see the note on the standard picker.
++	if Net.is_online() and not Net.is_host():
++		M.world.ActiveHint(true, "The host chooses the pack.", false)
++		await get_tree().create_timer(1.5).timeout
++		M.world.ActiveHint(false, "The host chooses the pack.")
++		M.world.CreateLobby()
++		return
++	## Host publishes the pack folder plus its exact clip order -- the order may
++	## have been shuffled or sorted, and everyone must dub the same sequence.
++	if Net.is_online() and Net.is_host() and M.session_type == M.SESSION_TYPE.VIDEO_DUB:
++		var paths: PackedStringArray = []
++		for c: OmniClip in Metro.gameplay_resource_dub_mode.omni_clip_array.data:
++			paths.append(c.self_global_path)
++		Net.apply_roster_to_metro()
++		Net.start_dub(tree.active_pack.global_folder_path, paths)
+ 	match M.session_type:
+ 
+ 

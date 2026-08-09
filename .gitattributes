@@ -1,0 +1,3 @@
+# gdRE Tools writes LF, and the patches are matched against its output line for
+# line. Letting git hand out CRLF copies on Windows would be a bad time.
+* text eol=lf

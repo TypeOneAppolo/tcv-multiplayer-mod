@@ -1,0 +1,61 @@
+--- a/scene/match/match_master.gd
++++ b/scene/match/match_master.gd
+@@ -13,6 +13,8 @@
+ 	GENERIC_scene_model_setup()
+ 	_setup_twitch_chatter()
+ 	if not await _intro(): reset_skip.call()
++	## Regroup before round one -- intros differ in length if anyone skipped.
++	await Net.barrier("intro")
+ 	await _gameplay_loop_method()
+ 
+ 
+@@ -77,7 +79,7 @@
+ 		if skip_triggered: return false
+ 	return true
+ 
+-func _gameplay_loop_method() -> void : while true: await _one_gameplay_loop()
++func _gameplay_loop_method() -> void : while not net_show_over: await _one_gameplay_loop()
+ 
+ 
+ 
+@@ -85,18 +87,28 @@
+ 
+ func _one_gameplay_loop() -> void :
+ 	await GENERIC_RF_NewRound_PlayVclip()
++	await Net.barrier("clip_%d" % dynasteen.round)
+ 	await GENERIC_RF_RecordContestants()
++	## Regroup before the post-record dialogue. The last take is still uploading
++	## when its owner finishes, so without this the host can click through the
++	## dialogue before the other machines have opened it.
++	await Net.barrier("recorded_%d" % dynasteen.round)
+ 	await GENERIC_Skippable_RF_ContestantPerformancePlayback()
++	await Net.barrier("playback_%d" % dynasteen.round)
+ 	await _RF_ContestantJudging()
+ 	if dynasteen.round + 1 == statsteen.total_rounds: await GENERIC_RF_ContestantScoreFinale()
+ 	else: await _RF_ContestantScoreUpdates()
+ 	await GENERIC_RF_EndRoundButtonOptions()
++	if net_show_over: return
++	## Nobody advances until every machine has left the end-of-round menu.
++	await Net.barrier("endround_%d" % dynasteen.round)
+ 	await GENERIC_RF_WrapupRoundNextRound()
+ 
+ 
+ func _RF_ContestantJudging() -> void :
+ 
+ 	var scorer: = Scorer.new()
++	await NET_sync_scores()
+ 	VolumeService.tween_volume_music_and_chatter(VOLUME_REDUCED, 1.5)
+ 	var individual_contestant_judge_scoring = func(i: int) -> int:
+ 
+@@ -108,7 +120,10 @@
+ 		judge_screen.texture = wave_img
+ 
+ 		var scorei: int
+-		if M.session_type == M.SESSION_TYPE.STANDARD_JABRONI:
++		if Net.is_online() and i < net_scores.size():
++			scorei = net_scores[i]
++			print("MatchMaster | score: %d (host authoritative)" % scorei)
++		elif M.session_type == M.SESSION_TYPE.STANDARD_JABRONI:
+ 			scorei = randi_range(0, 5)
+ 			print("MatchMaster | scoref: %1.4f (Jabroni RNG)" % scorei)
+ 		else:

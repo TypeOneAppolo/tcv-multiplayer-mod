@@ -1,0 +1,26 @@
+--- a/scenes/nav_specific/clip_selector_menus/clip_selection_standard.gd
++++ b/scenes/nav_specific/clip_selector_menus/clip_selection_standard.gd
+@@ -129,6 +129,23 @@
+ 
+ 
+ func initiate_session() -> void :
++	## Followers never start anything. One can reach this screen on its own --
++	## from the main menu after a show, or by walking back into it -- and
++	## starting here would run a second match on this machine alone while the
++	## lobby is still live, leaving it clips ahead of everyone else.
++	if Net.is_online() and not Net.is_host():
++		M.world.ActiveHint(true, "The host chooses the clips.", false)
++		await get_tree().create_timer(1.5).timeout
++		M.world.ActiveHint(false, "The host chooses the clips.")
++		M.world.CreateLobby()
++		return
++	## Host broadcasts the shuffled clip order and final roster, then starts its
++	## own match as normal. Followers get pushed into the match by Net.
++	if Net.is_online() and Net.is_host():
++		var paths: PackedStringArray = []
++		for clip: OmniClip in Metro.gameplay_omniclip_set: paths.append(clip.self_global_path)
++		Net.apply_roster_to_metro()
++		Net.start_match(paths)
+ 	match M.session_type:
+ 		M.SESSION_TYPE.STANDARD: M.world.CreateMatch()
+ 		M.SESSION_TYPE.STANDARD_JABRONI: M.world.CreateMatch()

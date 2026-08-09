@@ -1,0 +1,24 @@
+--- a/scene/singleton/world.gd
++++ b/scene/singleton/world.gd
+@@ -141,6 +141,21 @@
+ 
+ 
+ 
++## Online lobby. Instantiated straight from its script -- it builds its own UI,
++## so the mod does not have to ship a hand-edited .tscn.
++func CreateLobby() -> void :
++	await _standard_down()
++	var lobby: Control = load("res://net/lobby.gd").new()
++	primary_capsule.add_child(lobby)
++	await _standard_up()
++
++
++## Temporary entry point. Replace with a real main-menu button in the editor.
++func _unhandled_input(event: InputEvent) -> void :
++	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_F9:
++		CreateLobby()
++
++
+ func _ready() -> void :
+ 	if M.data.player.first_time and not M.THISISDEMO:
+ 		CreateTutorial()
