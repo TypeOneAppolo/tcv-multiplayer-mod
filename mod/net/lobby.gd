@@ -7,6 +7,8 @@ extends Control
 ## clip set, Net broadcasts it and every machine enters the match together.
 
 const ROW_HEIGHT: int = 34
+const KOFI_URL: String = "https://ko-fi.com/appolodev"
+const GAMEBANANA_URL: String = "https://gamebanana.com/mods/702231"
 
 var name_field: LineEdit
 var address_field: LineEdit
@@ -120,6 +122,54 @@ func _build_ui() -> void:
 	player_rows = VBoxContainer.new()
 	player_rows.custom_minimum_size.y = ROW_HEIGHT * Net.MAX_PLAYERS
 	column.add_child(player_rows)
+
+	_build_support_footer()
+
+
+## Sits in its own bottom-anchored overlay instead of on the end of the column.
+## The window is a fixed 1152x648 and the column already fills nearly all of it,
+## so two more rows in the flow would push the contestant list off the bottom.
+## Everything here ignores the mouse except the buttons, otherwise the overlay
+## would swallow clicks meant for Host and Join underneath it.
+func _build_support_footer() -> void:
+	var footer_margin: = MarginContainer.new()
+	footer_margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+	footer_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for side: String in ["left", "right", "top"]:
+		footer_margin.add_theme_constant_override("margin_" + side, 64)
+	## Tighter than the column's 64 on purpose. With four contestants listed the
+	## column reaches y=526 and the footer would otherwise start one pixel later.
+	footer_margin.add_theme_constant_override("margin_bottom", 36)
+	add_child(footer_margin)
+
+	var footer: = VBoxContainer.new()
+	footer.alignment = BoxContainer.ALIGNMENT_END
+	footer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	footer.add_theme_constant_override("separation", 6)
+	footer_margin.add_child(footer)
+
+	var pitch: = Label.new()
+	pitch.text = "This mod is free. If it got your group playing, please support me on Ko-fi, or upvote the mod on GameBanana."
+	pitch.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	pitch.add_theme_font_size_override("font_size", 14)
+	pitch.add_theme_color_override("font_color", Color(0.72, 0.72, 0.8))
+	footer.add_child(pitch)
+
+	var links: = HBoxContainer.new()
+	links.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	links.add_theme_constant_override("separation", 8)
+	footer.add_child(links)
+
+	links.add_child(_link_button("Support me on Ko-fi", KOFI_URL))
+	links.add_child(_link_button("Upvote on GameBanana", GAMEBANANA_URL))
+
+
+func _link_button(text: String, url: String) -> Button:
+	var button: = Button.new()
+	button.text = text
+	button.tooltip_text = url
+	button.pressed.connect(func() -> void: OS.shell_open(url))
+	return button
 
 
 func _labeled_field(parent: Control, label_text: String, default_value: String) -> LineEdit:
