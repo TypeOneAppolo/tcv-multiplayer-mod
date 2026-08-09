@@ -23,7 +23,7 @@ in one place so you're not all sat looking at different numbers.
 Works for the normal game show and for dub mode, where you take turns on
 alternating clips and then watch the finished thing together.
 
-**Windows 0.5.1 only. Steam and itch versions both work. You need to own the game.**
+**Windows 0.5.1 only. You need to own the game.**
 
 ## contents
 
@@ -65,7 +65,7 @@ it and builds you a new exe.
 Download the zip, unzip it wherever, double click **Install.bat**. That's pretty
 much all of it.
 
-It goes looking for your game on its own, it checks steam, itch, downloads and
+It goes looking for your game on its own, it checks itch, downloads and
 desktop. If it turns up a few copies it just asks which one you want. If it
 can't find anything you can drag your game exe onto Install.bat instead, or
 paste the path in when it asks you.
@@ -188,7 +188,7 @@ person too.
 ## troubleshooting
 
 **It can't find my game.** Drag your game exe onto `Install.bat`, or paste the
-full path when it asks. It only auto checks steam, itch, downloads and desktop.
+full path when it asks. It only auto checks itch, downloads and desktop.
 
 **The installer stops with a "hunk does not match" error.** Your game isn't
 Windows 0.5.1. That's the only version the patches are written against.
