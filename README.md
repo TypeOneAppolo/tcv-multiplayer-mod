@@ -1,49 +1,77 @@
-# The Choicer Voicer — Online Multiplayer Mod
+# The Choicer Voicer Online Multiplayer
 
-Play The Choicer Voicer with up to 4 people online. Everyone records on their
-own mic, on their own PC, and the show stays in sync. One contestant performs at
-a time, the host clicks through the dialogue for everyone, and scores are worked
-out in one place so you don't end up looking at different leaderboards.
+Play The Choicer Voicer with up to 4 people online. Everyone records on their own
+mic on their own pc and it all stays in sync, so one person performs at a time,
+the host clicks through the dialogue for everybody, and the scores get worked out
+in one place so you're not all sat looking at different numbers.
 
 Works for the normal game show and for dub mode, where you take turns on
-alternating clips and then watch the finished dub together.
+alternating clips and then watch the finished thing together.
 
-## You need to own the game
+**Windows 0.5.1 only. Steam and itch versions both work. You need to own the game.**
 
-There's no game in this repo. No code, no assets, no exe. Just the netcode I
-wrote, a set of patches, and a script that builds the mod using the copy of the
-game you already bought.
+## contents
 
-The installer never downloads the game. It decompiles your own copy, on your
-own PC, applies the mod, and builds you a new exe next to it.
+- [Quick start](#quick-start)
+- [You need to own the game](#you-need-to-own-the-game)
+- [Installing](#installing)
+  - [Command line options](#command-line-options)
+- [Setting up a game](#setting-up-a-game)
+- [Playing](#playing)
+- [Troubleshooting](#troubleshooting)
+- [Why you cant just drop files in](#why-you-cant-just-drop-files-in)
+- [How it works](#how-it-works)
+- [Working on it](#working-on-it)
+- [Rough edges](#rough-edges)
+- [Credits](#credits)
 
-Get the game here first: https://yeahmaybe.itch.io/the-choicer-voicer
+## quick start
 
-## Installing
+1. Buy the game: https://yeahmaybe.itch.io/the-choicer-voicer
+2. Download this repo as a zip and unzip it anywhere.
+3. Double click **Install.bat** and wait a few minutes.
+4. Copy the host's voice packs to everyone else (see
+   [setting up a game](#setting-up-a-game)).
+5. Launch the new exe, press **F9**, host or join.
 
-Download this repo as a zip, unzip it anywhere, and **double-click
-`Install.bat`**. That's it.
+## you need to own the game
 
-It'll find your copy of the game on its own (it checks Steam, itch, Downloads
-and Desktop). If it finds more than one it'll ask which. If it can't find any,
-you can drag your game exe straight onto `Install.bat` instead, or paste the
-path when it asks.
+There's no game files in here at all. No code, no assets, no exe. It's just my
+netcode, a few patches, and a script that builds the mod out of the copy you
+already bought.
 
-You don't need Python. If you haven't got it, the installer grabs a small copy
-into `.cache` and uses that. Nothing gets installed on your system.
+The installer never downloads the game. It takes your copy, on your pc, patches
+it and builds you a new exe.
 
-It downloads about 140 MB of tools ([gdRE Tools](https://github.com/GDRETools/gdsdecomp)
-and [Godot](https://godotengine.org), both free and open source), builds the
-mod, and drops `TheChoicerVoicer-Multiplayer.exe` in the same folder. Takes a
-few minutes. Run it again later and it reuses the downloads.
+## installing
 
-Both Windows 0.5.1 builds work, Steam and itch.
+Download the zip, unzip it wherever, double click **Install.bat**. That's pretty
+much all of it.
 
-Your saves, settings and packs aren't touched. The modded exe reads the same
-`%APPDATA%\YeahMaybe\ChoicerVoicer` folder, so keep both exes around and launch
-whichever you feel like.
+It goes looking for your game on its own, it checks steam, itch, downloads and
+desktop. If it turns up a few copies it just asks which one you want. If it
+can't find anything you can drag your game exe onto Install.bat instead, or
+paste the path in when it asks you.
 
-### If you'd rather use a terminal
+You don't need python or any of that. If you haven't got it the installer pulls
+a tiny copy into `.cache` and uses that, nothing gets installed on your system.
+
+It downloads about 140mb of tools ([gdRE](https://github.com/GDRETools/gdsdecomp)
+and [Godot](https://godotengine.org), both free), builds the mod, and leaves
+`TheChoicerVoicer-Multiplayer.exe` sat in the same folder. Takes a few minutes.
+Run it again later and it reuses the downloads so it's quicker the second time.
+
+Your saves and packs don't get touched. The modded exe reads the same
+`%APPDATA%\YeahMaybe\ChoicerVoicer` folder as the normal one, so just keep both
+exes and launch whichever you fancy.
+
+**Everyone playing needs to run the installer themselves.** Don't send people
+the built exe, that's the whole game and it's not yours to hand out. Send them
+this repo instead.
+
+### command line options
+
+If you'd rather use a terminal:
 
 ```
 python install_mod.py "C:\path\to\TheChoicerVoicer_0-5-1 stable.exe"
@@ -51,69 +79,121 @@ python install_mod.py "C:\path\to\TheChoicerVoicer_0-5-1 stable.exe"
 
 | Flag | What it does |
 | --- | --- |
-| `-o PATH` | Where to put the modded exe |
-| `--godot PATH` | Use a Godot 4.4.1 you already have |
-| `--gdre PATH` | Use a `gdre_tools.exe` you already have |
-| `--keep-work` | Keep the decompiled project around |
-| `--project DIR` | Patch a decompiled project and stop, for modders |
+| `-o PATH` | where to put the modded exe |
+| `--godot PATH` | use a Godot 4.4.1 you've already got |
+| `--gdre PATH` | use a `gdre_tools.exe` you've already got |
+| `--keep-work` | keep the decompiled project instead of binning it |
+| `--project DIR` | patch a decompiled project and stop, for modders |
 
-## Playing
+## setting up a game
 
-**Everyone needs the same voice packs.** This is the one that catches people
-out. Scores are worked out against the clips you're performing, so everyone
-needs the actual clip files the host picks. Copy the host's
-`%APPDATA%\YeahMaybe\ChoicerVoicer\game\packs_voice` folder to everyone else.
-The lobby lists any differences it spots, and the mod would rather refuse to
-start than let you desync halfway through a round.
+**Everybody needs the same voice packs.** This is the bit that trips people up,
+so do it before you try to play. Scores get worked out against the clips you're
+performing, so everyone needs the actual clip files the host picks.
 
-Then:
+Copy the host's
 
-1. Launch the modded exe and press **F9** at the main menu. That opens the
-   online lobby. (F9 is a stopgap, there's no menu button for it yet.)
-2. Host presses **Host**. Everyone else types the host's IP and presses **Join**.
-3. Host presses **Start (choose clips)**, or **Start (dub mode)**, picks a pack,
-   and everyone gets pulled into the match together.
+```
+%APPDATA%\YeahMaybe\ChoicerVoicer\game\packs_voice
+```
 
-It uses **UDP port 7654**. Over the internet the host has to forward that port.
-If you'd rather not mess with your router, something like ZeroTier, Tailscale or
-Radmin works fine, just connect on the virtual IPs. 2 to 4 players.
+folder over to everyone else, into the same place. Paste that path straight into
+explorer's address bar if you can't find it.
 
-The host drives. They click through dialogue, replays and the end-of-round menu
-for the whole table so nobody drifts out of step. When it's your turn to
-perform, your mic opens on your machine and only yours.
+The lobby lists anything it spots as different, and the mod would rather flat out
+refuse to start than let you desync halfway through a round.
 
-## Why there's no drag-and-drop install
+**Everyone also needs the same build of the mod.** If someone installed an older
+version they get kicked with a message saying so. Just get them to run the
+installer again.
 
-Fair question, since that's how most game mods work. The problem is that Godot
-games ship as one exe with everything packed inside it, and this game's build
-has the pack embedded rather than sitting next to it as a `.pck`. Godot only
-looks for loose override files when there's no embedded pack, so dropping
-scripts next to the exe does nothing at all. The game never reads them.
+**Networking.** It runs on **UDP port 7654**. Over the internet the host has to
+forward that port on their router. If you'd rather not be messing about in there,
+ZeroTier, Tailscale or Radmin all work, you just connect on the virtual IPs
+instead. 2 to 4 players.
 
-On top of that the scripts inside the pack are compiled to bytecode, not stored
-as text, so there's nothing to hand-edit even if you cracked the exe open.
+## playing
 
-Which leaves rebuilding the exe, and that's what the installer does. The upside
-is it's honest: no game files get passed around, and everyone builds from the
-copy they paid for.
+1. Launch the modded exe and hit **F9** on the main menu, that opens the online
+   lobby. (F9 is a bit of a bodge, there's no proper menu button yet.)
+2. Host hits **Host**. Everyone else types the host's IP in and hits **Join**.
+3. Once everyone's showing in the list, host hits **Start (choose clips)** for the
+   normal game show, or **Start (dub mode)**, picks a pack, and everyone gets
+   dragged into the match together.
 
-## How it works
+The host drives everything. They click through the dialogue, the replays and the
+end of round menu for the whole table so nobody ends up out of step. When it's
+your turn to perform your mic opens on your machine and only yours. Everyone else
+just watches and hears your take once it's uploaded.
 
-The base game is already turn-based, so this didn't need much. A contestant's
-score comes entirely from three small byte arrays of waveform data, so there's
-no realtime state to sync. The mod just has to agree whose turn it is, ship one
-performance per turn, and stop machines drifting apart between phases.
+When the pack's finished you all get put back in the lobby and the host can pick
+another one. No need to restart anything.
+
+## troubleshooting
+
+**It can't find my game.** Drag your game exe onto `Install.bat`, or paste the
+full path when it asks. It only auto checks steam, itch, downloads and desktop.
+
+**The installer stops with a "hunk does not match" error.** Your game isn't
+Windows 0.5.1. That's the only version the patches are written against.
+
+**Windows says the exe is unsafe / antivirus flags it.** It's an unsigned exe
+that just got built on your machine, so nothing vouches for it. Same thing
+happens to anyone building a Godot game. If you'd rather not, don't run it.
+
+**F9 does nothing.** You have to be on the main menu, and it has to be the modded
+exe, not your original one.
+
+**Nobody can join me.** Port 7654 UDP needs forwarding to your pc, and the game
+needs allowing through your firewall. Try one of the LAN tools above first, it's
+much less hassle and it proves whether the rest of it works.
+
+**Match won't start, says clips are missing.** Someone hasn't got the voice packs
+the host picked. Copy `packs_voice` over again and make sure it went to the right
+folder.
+
+**Somebody got kicked for a different mod version.** They're on an older build of
+the mod. Everyone runs the installer again off the same version of this repo.
+
+**Someone crashed or alt f4'd mid match.** Everyone else carries on after about a
+minute. It won't hang forever waiting for them.
+
+**Where are the logs.** `%APPDATA%\YeahMaybe\ChoicerVoicer\logs\`. Grab
+`choicervoicer.log` off everyone involved if you're reporting something, the
+network stuff all gets logged with `[NET]` in front of it.
+
+## why you cant just drop files in
+
+Fair question because that's how most mods work. Problem is Godot games are one
+exe with everything packed inside them, and this one's got the pack baked into
+the exe rather than sat next to it as a `.pck`. Godot only bothers looking for
+loose override files when there's no pack inside the exe, so anything you drop
+next to it just gets ignored. The game never even reads it.
+
+And the scripts inside that pack are compiled down to bytecode anyway, they're
+not text, so there'd be nothing to edit even if you did crack it open.
+
+So the only way is rebuilding the exe, which is what the installer does. Upside
+is it keeps everything above board, nobody's passing game files around and
+everyone builds from the copy they paid for.
+
+## how it works
+
+The base game is already turn based so this didn't need loads. A contestant's
+score comes entirely out of three small byte arrays of waveform data, so there's
+no realtime state to sync at all. The mod just has to agree whose turn it is,
+send one performance per turn, and stop everyone drifting apart between phases.
 
 - ENet client/server, host is authoritative and always slot 0.
-- Recorded takes get chunked, sent to everyone, and fed into the waveform as if
-  they'd been recorded locally.
-- Scoring happens on the host and gets published, so float rounding can't give
-  two people different leaderboards.
+- Recorded takes get chunked up, sent to everyone, and fed into the waveform like
+  they'd been recorded on that machine.
+- Scoring happens on the host then gets published out, so float rounding can't
+  give two people different leaderboards.
 - Phase barriers hold everyone at each stage of a round, with timeouts so one
-  crashed player can't freeze the table.
-- Every show carries a generation stamp. Round state is keyed by round number
-  and contestant slot, and both restart at zero, so without it the leftovers of
-  a finished match look identical to a fresh one.
+  person crashing can't freeze the whole table.
+- Every show carries a generation stamp. Round state is keyed by round number and
+  contestant slot and both of those restart at zero, so without it the leftovers
+  of a finished match look exactly like a fresh one.
 
 What's in `mod/`:
 
@@ -123,24 +203,24 @@ mod/net/lobby.gd          the lobby screen, built in code
 mod/net/_selftest.gd      compiles every script in the project
 mod/net/_nettest.gd       headless host/client smoke test
 mod/patches/*.patch       edits to 7 of the game's scripts
-mod/export_presets.cfg    the Windows export preset
+mod/export_presets.cfg    the windows export preset
 ```
 
-Two new files, plus about 370 changed lines across 7 game scripts. The installer
-also fixes a gdRE bug that writes node paths as `$A / B`, which every decompiled
-build needs whether you're modding it or not.
+Two new files and about 370 changed lines across 7 of the game's scripts. The
+installer also fixes a gdRE bug where it writes node paths as `$A / B`, which
+every decompiled build needs sorting whether you're modding it or not.
 
-## Working on it
+## working on it
 
 ```
 python install_mod.py --project path/to/decompiled
 ```
 
-That patches a project in place and stops. Open it in Godot 4.4.1 from there.
+That patches a project in place and stops, then you open it in Godot 4.4.1.
 
 The two test scripts aren't autoloads in the committed project. Register one
-temporarily when you want to run it, and never both at once, because the
-self-test quits the tree the moment it finishes.
+temporarily when you want to run it, and never both at the same time, because the
+self test quits the tree the second it finishes.
 
 ```
 # compile every script
@@ -152,25 +232,25 @@ godot --headless --path project -- client
 ```
 
 `_nettest.gd` covers the bug that used to make the game unplayable after one
-pack: it runs a second show reusing the same contestant slot and barrier tags,
-and checks the new take turns up instead of the old one.
+pack. It runs a second show reusing the same contestant slot and barrier tags and
+checks the new take turns up instead of the old one.
 
-To regenerate the patches after editing a game script, diff your project against
-a clean decompile with the node-path fix applied.
+If you edit a game script and want to regenerate the patches, diff your project
+against a clean decompile with the node path fix applied.
 
-## Rough edges
+## rough edges
 
-- Lobby is on F9, not a menu button.
-- Windows 0.5.1 only. Other versions will fail with a clear error once it tries
-  to patch them.
-- Twitch modes are singleplayer and untouched.
-- Pack differences are only checked against the clips actually picked.
+- Lobby's on F9, not a menu button.
+- Windows 0.5.1 only. Anything else fails with a clear error when it goes to
+  patch it.
+- Twitch modes are singleplayer, haven't touched them.
+- Pack differences only get checked against the clips actually picked.
 
-## Credits
+## credits
 
-The Choicer Voicer is by **YeahMaybe**. This is an unofficial fan mod, nothing
-to do with them, and not endorsed by them. All the game's code and assets stay
-their copyright and none of it is in here.
+The Choicer Voicer is by **YeahMaybe**. This is just an unofficial fan mod,
+nothing to do with them and not endorsed by them. All the game's code and assets
+stay their copyright and none of it is in here.
 
 My code (`mod/net/`, `install_mod.py`) is MIT, see [LICENSE](LICENSE). Built with
-[Godot](https://godotengine.org) and [gdRE Tools](https://github.com/GDRETools/gdsdecomp).
+[Godot](https://godotengine.org) and [gdRE](https://github.com/GDRETools/gdsdecomp).
