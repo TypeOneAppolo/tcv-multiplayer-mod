@@ -9,6 +9,8 @@ extends Control
 const ROW_HEIGHT: int = 34
 const KOFI_URL: String = "https://ko-fi.com/appolodev"
 const GAMEBANANA_URL: String = "https://gamebanana.com/mods/702231"
+## Gap between the support block and the bottom right corner of the screen.
+const SUPPORT_INSET: Vector2 = Vector2(48, 32)
 
 var name_field: LineEdit
 var address_field: LineEdit
@@ -22,6 +24,7 @@ var leave_button: Button
 var status_label: Label
 var warning_label: Label
 var player_rows: VBoxContainer
+var support_box: VBoxContainer
 
 
 func _ready() -> void:
@@ -126,42 +129,50 @@ func _build_ui() -> void:
 	_build_support_footer()
 
 
-## Sits in its own bottom-anchored overlay instead of on the end of the column.
-## The window is a fixed 1152x648 and the column already fills nearly all of it,
-## so two more rows in the flow would push the contestant list off the bottom.
-## Everything here ignores the mouse except the buttons, otherwise the overlay
-## would swallow clicks meant for Host and Join underneath it.
+## Pinned to the bottom right corner of the screen, positioned by hand rather
+## than by anchors. Nothing ever gives this Control a size -- world.gd hangs the
+## lobby off PrimaryCapsule, a plain Node, so the anchor preset in _ready() has
+## no parent rect to resolve against and our rect stays 0x0. Anchoring anything
+## to "the bottom" therefore lands it at the top left on top of the form, which
+## is exactly what happened the first time. The column above gets away with it
+## because MarginContainer falls back to its own minimum size.
+##
+## Text is hard wrapped for the same reason: an autowrapping label in a 0-width
+## parent wraps to one word per line.
 func _build_support_footer() -> void:
-	var footer_margin: = MarginContainer.new()
-	footer_margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	footer_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for side: String in ["left", "right", "top"]:
-		footer_margin.add_theme_constant_override("margin_" + side, 64)
-	## Tighter than the column's 64 on purpose. With four contestants listed the
-	## column reaches y=526 and the footer would otherwise start one pixel later.
-	footer_margin.add_theme_constant_override("margin_bottom", 36)
-	add_child(footer_margin)
-
-	var footer: = VBoxContainer.new()
-	footer.alignment = BoxContainer.ALIGNMENT_END
-	footer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	footer.add_theme_constant_override("separation", 6)
-	footer_margin.add_child(footer)
+	support_box = VBoxContainer.new()
+	support_box.add_theme_constant_override("separation", 6)
+	add_child(support_box)
 
 	var pitch: = Label.new()
-	pitch.text = "This mod is free. If it got your group playing, please support me on Ko-fi, or upvote the mod on GameBanana."
-	pitch.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	pitch.text = "This mod is free. If it got your group playing,\nplease support me on Ko-fi, or upvote it on GameBanana."
+	pitch.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	pitch.add_theme_font_size_override("font_size", 14)
 	pitch.add_theme_color_override("font_color", Color(0.72, 0.72, 0.8))
-	footer.add_child(pitch)
+	support_box.add_child(pitch)
 
 	var links: = HBoxContainer.new()
-	links.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	links.alignment = BoxContainer.ALIGNMENT_END
 	links.add_theme_constant_override("separation", 8)
-	footer.add_child(links)
+	support_box.add_child(links)
 
 	links.add_child(_link_button("Support me on Ko-fi", KOFI_URL))
 	links.add_child(_link_button("Upvote on GameBanana", GAMEBANANA_URL))
+
+	_place_support_box()
+	## Sizes are not final until the containers have had their layout pass, and
+	## the corner moves if the window ever changes resolution.
+	support_box.minimum_size_changed.connect(_place_support_box)
+	get_viewport().size_changed.connect(_place_support_box)
+	_place_support_box.call_deferred()
+
+
+func _place_support_box() -> void:
+	if not is_instance_valid(support_box): return
+	support_box.size = support_box.get_combined_minimum_size()
+	## Global and local coords are the same thing here -- the lobby sits at the
+	## canvas origin, which is also why the column reads as top left aligned.
+	support_box.position = get_viewport_rect().size - support_box.size - SUPPORT_INSET
 
 
 func _link_button(text: String, url: String) -> Button:
