@@ -1,5 +1,20 @@
 # The Choicer Voicer Online Multiplayer
 
+<p align="center">
+  <a href="https://ko-fi.com/appolodev">
+    <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Buy me a coffee on Ko-fi" height="40">
+  </a>
+  &nbsp;
+  <a href="https://ko-fi.com/appolodev/goal?g=0">
+    <img src="https://img.shields.io/badge/Ko--fi-see%20the%20goal-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" alt="Ko-fi goal" height="40">
+  </a>
+</p>
+
+<p align="center">
+  <em>This mod is free and always will be. If it got your group playing together,
+  a coffee helps me keep working on it.</em>
+</p>
+
 Play The Choicer Voicer with up to 4 people online. Everyone records on their own
 mic on their own pc and it all stays in sync, so one person performs at a time,
 the host clicks through the dialogue for everybody, and the scores get worked out
