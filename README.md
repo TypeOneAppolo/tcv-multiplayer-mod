@@ -18,6 +18,7 @@ alternating clips and then watch the finished thing together.
   - [Command line options](#command-line-options)
 - [Setting up a game](#setting-up-a-game)
 - [Playing](#playing)
+- [Is this a virus](#is-this-a-virus)
 - [Troubleshooting](#troubleshooting)
 - [Why you cant just drop files in](#why-you-cant-just-drop-files-in)
 - [How it works](#how-it-works)
@@ -29,7 +30,8 @@ alternating clips and then watch the finished thing together.
 
 1. Buy the game: https://yeahmaybe.itch.io/the-choicer-voicer
 2. Download this repo as a zip and unzip it anywhere.
-3. Double click **Install.bat** and wait a few minutes.
+3. Double click **Install.bat** and wait a few minutes. It'll ask you to
+   install python first if you haven't got it.
 4. Copy the host's voice packs to everyone else (see
    [setting up a game](#setting-up-a-game)).
 5. Launch the new exe, press **F9**, host or join.
@@ -53,8 +55,15 @@ desktop. If it turns up a few copies it just asks which one you want. If it
 can't find anything you can drag your game exe onto Install.bat instead, or
 paste the path in when it asks you.
 
-You don't need python or any of that. If you haven't got it the installer pulls
-a tiny copy into `.cache` and uses that, nothing gets installed on your system.
+You need python installed. If you haven't got it the installer offers to get it
+through winget, which is Microsoft's own package manager and already on your pc,
+or you can grab it yourself from [python.org](https://www.python.org/downloads/)
+and tick "Add python.exe to PATH" on the first screen.
+
+An earlier version downloaded a copy of python itself and ran it. That's exactly
+what a malware dropper does and antivirus started flagging the download, so it
+doesn't do that any more. See
+[is this a virus](#is-this-a-virus).
 
 It downloads about 140mb of tools ([gdRE](https://github.com/GDRETools/gdsdecomp)
 and [Godot](https://godotengine.org), both free), builds the mod, and leaves
@@ -129,6 +138,38 @@ just watches and hears your take once it's uploaded.
 When the pack's finished you all get put back in the lobby and the host can pick
 another one. No need to restart anything.
 
+## is this a virus
+
+No, and you don't have to take my word for it, everything's readable right here.
+
+Some people's antivirus flags the download as `Trojan:Script/Wacatac.H!ml`. The
+`!ml` on the end means a machine learning guess rather than an actual match
+against known malware, and that particular name is one of the most common false
+positives going.
+
+It was my fault. `Install.bat` used to download a copy of python off the internet
+and run it if you didn't have one. That's convenient, and it's also exactly the
+shape of a malware dropper: a batch file quietly launching powershell, pulling a
+zip off the web and running the exe inside it. Antivirus doesn't know why you're
+doing it, only that you are. That code is gone now, the launcher doesn't download
+or run anything by itself.
+
+If you want to check for yourself:
+
+- The whole thing is 22 text files, about 100kb. Open `Install.bat` and
+  `install_mod.py` in notepad and read them, that's all there is.
+- The installer does download [Godot](https://godotengine.org) and
+  [gdRE](https://github.com/GDRETools/gdsdecomp) and run them, because it needs
+  them to rebuild the game. Both are well known open source tools and the urls
+  are sat in plain sight at the top of `install_mod.py`, pointing at their
+  official GitHub releases.
+- Browsers warn about new files nobody's downloaded before, separately from any
+  antivirus. That one goes away on its own as more people grab it.
+
+If your antivirus still complains, please report it to the vendor as a false
+positive rather than just turning your antivirus off. That fixes it for the next
+person too.
+
 ## troubleshooting
 
 **It can't find my game.** Drag your game exe onto `Install.bat`, or paste the
@@ -137,9 +178,11 @@ full path when it asks. It only auto checks steam, itch, downloads and desktop.
 **The installer stops with a "hunk does not match" error.** Your game isn't
 Windows 0.5.1. That's the only version the patches are written against.
 
-**Windows says the exe is unsafe / antivirus flags it.** It's an unsigned exe
-that just got built on your machine, so nothing vouches for it. Same thing
-happens to anyone building a Godot game. If you'd rather not, don't run it.
+**Antivirus flags the download.** See [is this a virus](#is-this-a-virus).
+
+**Windows says the modded exe it built is unsafe.** That one's separate. It's an
+unsigned exe that got built on your machine a minute ago, so nothing vouches for
+it yet. Same thing happens to anybody building a Godot game.
 
 **F9 does nothing.** You have to be on the main menu, and it has to be the modded
 exe, not your original one.

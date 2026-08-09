@@ -1,6 +1,12 @@
 @echo off
 rem Double-click this, or drag your game exe onto it.
-rem Finds Python if you have it, quietly fetches a small private copy if you don't.
+rem
+rem This launcher deliberately does not download or run anything itself. An
+rem earlier version fetched a copy of Python straight off the internet and ran
+rem it, which is exactly what a malware dropper does, and antivirus flagged the
+rem whole download because of it. If Python is missing we now ask winget, which
+rem installs a signed package from Microsoft's own catalogue, or just point you
+rem at python.org.
 
 setlocal
 cd /d "%~dp0"
@@ -22,18 +28,30 @@ if not errorlevel 1 (
   goto run
 )
 
-if exist ".cache\python\python.exe" (
-  set "PYEXE=.cache\python\python.exe"
-  goto run
-)
-
-echo Python isn't installed. Fetching a small copy just for this installer.
-echo Nothing is added to your system, it lives in .cache and you can delete it after.
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; New-Item -ItemType Directory -Force '.cache' ^| Out-Null; Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip' -OutFile '.cache\python.zip'; Expand-Archive -Force '.cache\python.zip' '.cache\python'; Remove-Item '.cache\python.zip' } catch { Write-Host $_.Exception.Message; exit 1 }"
-if errorlevel 1 goto nopython
-if not exist ".cache\python\python.exe" goto nopython
-set "PYEXE=.cache\python\python.exe"
+echo This needs Python, and it isn't installed.
+echo.
+
+where winget >nul 2>&1
+if errorlevel 1 goto manual
+
+echo I can install it for you with winget, which is Microsoft's own package
+echo manager, already built into Windows. It'll fetch the official signed
+echo Python package. Or say no and grab it yourself.
+echo.
+set /p GETPY="Install Python with winget now? [Y/N] "
+if /i not "%GETPY%"=="Y" goto manual
+
+echo.
+winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements
+if errorlevel 1 goto manual
+
+echo.
+echo Python installed. You'll need to close this window and run Install.bat
+echo again so it picks up the new install.
+echo.
+pause
+exit /b 0
 
 :run
 echo.
@@ -42,15 +60,16 @@ set "RESULT=%ERRORLEVEL%"
 echo.
 if not "%RESULT%"=="0" (
   echo Something went wrong. The message above says what.
-  echo If you're stuck, open an issue and paste it in.
+  echo If you're stuck, open an issue on GitHub and paste it in.
 )
 pause
 exit /b %RESULT%
 
-:nopython
+:manual
 echo.
-echo Couldn't download Python automatically.
-echo Install it from https://www.python.org/downloads/ and run this again.
+echo Install Python from https://www.python.org/downloads/
+echo Tick "Add python.exe to PATH" on the first screen of the installer.
+echo Then run Install.bat again.
 echo.
 pause
 exit /b 1
