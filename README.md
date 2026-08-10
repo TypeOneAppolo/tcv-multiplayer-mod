@@ -89,9 +89,9 @@ Your saves and packs don't get touched. The modded exe reads the same
 `%APPDATA%\YeahMaybe\ChoicerVoicer` folder as the normal one, so just keep both
 exes and launch whichever you fancy.
 
-**Everyone playing needs to run the installer themselves.** Don't send people
-the built exe, that's the whole game and it's not yours to hand out. Send them
-this repo instead.
+Everyone playing needs to run the installer themselves. Don't send people the
+built exe, that's the whole game and it's not yours to hand out. Send them this
+repo instead.
 
 ### command line options
 
@@ -111,8 +111,8 @@ python install_mod.py "C:\path\to\TheChoicerVoicer_0-5-1 stable.exe"
 
 ## setting up a game
 
-**Everybody needs the same voice packs.** This is the bit that trips people up,
-so do it before you try to play. Scores get worked out against the clips you're
+Everybody needs the same voice packs. This is the bit that trips people up, so
+do it before you try to play. Scores get worked out against the clips you're
 performing, so everyone needs the actual clip files the host picks.
 
 Copy the host's
@@ -127,14 +127,14 @@ explorer's address bar if you can't find it.
 The lobby lists anything it spots as different, and the mod would rather flat out
 refuse to start than let you desync halfway through a round.
 
-**Everyone also needs the same build of the mod.** If someone installed an older
+Everyone also needs the same build of the mod. If someone installed an older
 version they get kicked with a message saying so. Just get them to run the
 installer again.
 
-**Networking.** It runs on **UDP port 7654**. Over the internet the host has to
-forward that port on their router. If you'd rather not be messing about in there,
-ZeroTier, Tailscale or Radmin all work, you just connect on the virtual IPs
-instead. 2 to 4 players.
+On the networking side it runs on UDP port 7654. Over the internet the host has
+to forward that port on their router. If you'd rather not be messing about in
+there, ZeroTier, Tailscale or Radmin all work, you just connect on the virtual
+IPs instead. 2 to 4 players.
 
 ## playing
 
