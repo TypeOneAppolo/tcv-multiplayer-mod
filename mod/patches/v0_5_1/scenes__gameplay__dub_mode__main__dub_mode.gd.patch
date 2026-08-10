@@ -1,0 +1,190 @@
+--- a/scenes/gameplay/dub_mode/main/dub_mode.gd
++++ b/scenes/gameplay/dub_mode/main/dub_mode.gd
+@@ -58,6 +58,47 @@
+ 
+ 
+ var resource: GameplayResourceDubMode
++
++
++var net_dub: bool = false
++var my_dub_slot: int = 0
++var dub_player_count: int = 1
++var character_picker: Control
++
++
++func _is_my_clip(index: int) -> bool:
++	if not net_dub: return true
++	return _owner_slot_of_clip(index) == my_dub_slot
++
++
++# the host resolves one owner per clip and sends it with dub_begin. until that
++# lands, and for packs that tag no characters at all, deal them out in turn.
++func _owner_slot_of_clip(index: int) -> int:
++	if index >= 0 and index < Net.dub_clip_owners.size(): return Net.dub_clip_owners[index]
++	return index % dub_player_count
++
++
++func _clip_characters() -> Array:
++	var out: Array = []
++	for mi: OmniClipMemberInstance in performance_array: out.append(mi.shared_omniclip.dub_characters)
++	return out
++
++
++func _all_characters() -> PackedStringArray:
++	var seen: PackedStringArray = []
++	for mi: OmniClipMemberInstance in performance_array:
++		for character: String in mi.shared_omniclip.dub_characters:
++			if not character.is_empty() and not seen.has(character): seen.append(character)
++	return seen
++
++
++func _show_character_picker() -> void :
++	var picker: Control = preload("res://net/dub_character_picker.gd").new()
++	picker.characters = _all_characters()
++	picker.begin_requested.connect(_begin_from_idle)
++	character_picker = picker
++	add_child(picker)
++
+ 
+ 
+ var performance_array: Array[OmniClipMemberInstance]
+@@ -92,7 +133,7 @@
+ 	AudioServer.set_bus_mute(VolumeService.BUS_VCLIP, Profile.dub_mode_hard_mute_clips and !performing_finished)
+ 	AudioServer.set_bus_mute(VolumeService.BUS_PLAYBACK, Profile.dub_mode_hard_mute_clips)
+ 	lbl_caption.visible = ( !Profile.dub_mode_hard_no_captions and !performing_finished)
+-	btn_record.enable( !Profile.dub_mode_hard_one_take or !bool(turn_record_attempts))
++	btn_record.enable(( !Profile.dub_mode_hard_one_take or !bool(turn_record_attempts)) and _is_my_clip(clip_index) and !performing_finished)
+ 	player_backing_track.volume_linear = float( !Profile.dub_mode_mute_backing_track) * float(performing_finished)
+ 
+ 
+@@ -108,6 +149,9 @@
+ 
+ 
+ func _begin_from_idle() -> void :
++	if btn_begin.visible and not Net.is_spectator():
++		Net.broadcast_dub_begin(Net.resolve_dub_owners(_clip_characters()))
++	if is_instance_valid(character_picker): character_picker.queue_free()
+ 	remote_buttons.show()
+ 	btn_begin.hide()
+ 
+@@ -132,6 +176,43 @@
+ 	lbl_caption.modulate.a = 0.0;lbl_caption.text = active_clip.clip_caption; var tween: Tween = create_tween();tween.tween_property(lbl_caption, "modulate:a", 1.0, 0.5)
+ 	_buttons_toggle_array(previous_buttons_state)
+ 	_update_from_difficulty_toggles()
++	if net_dub and not _is_my_clip(index): _await_remote_clip(index)
++
++
++func _await_remote_clip(index: int) -> void :
++	_buttons_disable_all()
++	var who: String = Net.player_name_for_slot(_owner_slot_of_clip(index))
++	lbl_caption.modulate.a = 1.0
++	lbl_caption.text = "%s is dubbing this clip..." % who
++
++	var perf: Dictionary = await Net.await_performance(index, _owner_slot_of_clip(index))
++	if perf.is_empty():
++		lbl_caption.text = "%s never sent a take -- skipping." % who
++	else:
++		var mi: OmniClipMemberInstance = performance_array[index]
++		mi.member_audio = perf["wav"]
++		var d: Dictionary = perf["plmic"]
++		mi.data_vclip_average = d.get("va", PackedByteArray())
++		mi.data_vclip_maximum = d.get("vm", PackedByteArray())
++		mi.data_vclip_pitches = d.get("vp", PackedByteArray())
++		mi.data_plmic_average = d.get("pa", PackedByteArray())
++		mi.data_plmic_maximum = d.get("pm", PackedByteArray())
++		mi.data_plmic_pitches = d.get("pp", PackedByteArray())
++		mi.shared_omniclip.attempt_to_mark_as_seen()
++	_advance_after_clip()
++
++
++func _broadcast_my_take(index: int, mi: OmniClipMemberInstance) -> void :
++	if not net_dub: return
++	if not mi.member_audio is AudioStreamWAV: return
++	await Net.submit_performance(index, {
++		"va": mi.data_vclip_average,
++		"vm": mi.data_vclip_maximum,
++		"vp": mi.data_vclip_pitches,
++		"pa": mi.data_plmic_average,
++		"pm": mi.data_plmic_maximum,
++		"pp": mi.data_plmic_pitches,
++	}, mi.member_audio)
+ func _hear_again() -> void :
+ 	if !audio_interface_manager.idled.is_connected(_end_again): audio_interface_manager.idled.connect(_end_again)
+ 	audio_interface_manager.again()
+@@ -177,6 +258,11 @@
+ 	this_member_instance.write_vclip_data_from_aggregate(audio_interface_manager.spectrum_aggregate_vclip)
+ 	this_member_instance.write_plmic_data_from_aggregate(audio_interface_manager.spectrum_aggregate_plmic)
+ 	this_member_instance.shared_omniclip.attempt_to_mark_as_seen()
++	if net_dub: await _broadcast_my_take(clip_index, this_member_instance)
++	_advance_after_clip()
++
++
++func _advance_after_clip() -> void :
+ 	clip_index += 1
+ 	if clip_index >= performance_array.size():
+ 		_enter_finish()
+@@ -229,6 +315,12 @@
+ 	MicrophoneService.disable()
+ func _ready() -> void :
+ 	resource = Metro.gameplay_resource_dub_mode
++	net_dub = Net.is_online()
++	if net_dub:
++		my_dub_slot = maxi(0, Net.my_slot())
++		dub_player_count = maxi(1, Net.slot_count())
++		Net.dub_begin.connect(_begin_from_idle, CONNECT_DEFERRED)
++		Net.dub_watch.connect(_on_remote_watch, CONNECT_DEFERRED)
+ 	_connect_signals()
+ 	_setup_performance_array()
+ 	_enable_buttons()
+@@ -243,6 +335,8 @@
+ 	video_player_static.show()
+ 	video_player_static.play()
+ 	MicrophoneService.warmup()
++	if net_dub: _show_character_picker()
++	if net_dub and Net.take_pending_dub_begin(): _begin_from_idle.call_deferred()
+ 
+ 
+ 
+@@ -315,6 +409,16 @@
+ 
+ 
+ func watch() -> void :
++	if not Net.is_spectator(): Net.broadcast_dub_watch(true)
++	_do_watch()
++
++
++func _on_remote_watch(playing: bool) -> void :
++	if playing: _do_watch()
++	else: _do_stop()
++
++
++func _do_watch() -> void :
+ 	clear_playing_clips()
+ 	var performance_fusion: Array[OmniClipMemberInstance] = []
+ 	performance_fusion.append_array(performance_array)
+@@ -340,6 +444,11 @@
+ 
+ func clear_playing_clips() -> void : for timer: Timer in replay_streams.get_children(): timer.queue_free()
+ func stop() -> void :
++	if not Net.is_spectator(): Net.broadcast_dub_watch(false)
++	_do_stop()
++
++
++func _do_stop() -> void :
+ 	clear_playing_clips()
+ 	results.show()
+ 	if video_stream_player.is_playing(): video_stream_player.stop()
+@@ -366,5 +475,11 @@
+ func actually_exit() -> void :
+ 	AudioServer.set_bus_mute(VolumeService.BUS_VCLIP, false)
+ 	AudioServer.set_bus_mute(VolumeService.BUS_PLAYBACK, false)
+-	M.SaveData();M.world.return_to_dub_selection()
+-
++	M.SaveData()
++	if not net_dub or not Net.is_online():
++		M.world.return_to_dub_selection()
++		return
++	Net.end_session()
++	if Net.is_host(): M.world.return_to_dub_selection()
++	else: M.world.CreateLobby()
++

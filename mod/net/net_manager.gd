@@ -11,7 +11,7 @@ signal scores_received(scores: PackedInt32Array)
 
 const PORT: int = 7654
 const MAX_PLAYERS: int = 4
-const PROTOCOL_VERSION: int = 1
+const PROTOCOL_VERSION: int = 2
 const CHUNK_SIZE: int = 24576
 const PERFORMANCE_TIMEOUT: float = 60.0
 const BARRIER_TIMEOUT: float = 90.0
@@ -121,6 +121,8 @@ func _reset_session_state() -> void:
 	_barrier_released.clear()
 	_end_round_queue.clear()
 	_dub_begin_pending = false
+	dub_roles.clear()
+	dub_clip_owners = PackedInt32Array()
 	_scores_inbox = PackedInt32Array()
 	_scores_waiting = false
 
@@ -173,6 +175,12 @@ func _on_peer_disconnected(id: int) -> void:
 	if is_host():
 		players.erase(id)
 		_rebuild_slots()
+		# roles are keyed by slot and the slots below the leaver just shifted
+		# up, so keeping them would hand someone else's characters over.
+		if not dub_roles.is_empty():
+			dub_roles.clear()
+			log_net("cleared the dub casting, someone left while it was being picked")
+			_push_dub_roles()
 		_push_roster()
 	player_list_changed.emit()
 
@@ -604,12 +612,14 @@ func _rpc_start_dub(sid: int, folder: String, clip_paths: PackedStringArray) -> 
 var _dub_begin_pending: bool = false
 
 
-func broadcast_dub_begin() -> void:
-	if is_online(): _rpc_dub_begin.rpc(session_id)
+func broadcast_dub_begin(owners: PackedInt32Array = PackedInt32Array()) -> void:
+	dub_clip_owners = owners
+	if is_online(): _rpc_dub_begin.rpc(session_id, owners)
 
 @rpc("any_peer", "call_remote", "reliable")
-func _rpc_dub_begin(sid: int) -> void:
+func _rpc_dub_begin(sid: int, owners: PackedInt32Array) -> void:
 	if sid != session_id: return
+	dub_clip_owners = owners
 	_dub_begin_pending = true
 	dub_begin.emit()
 
@@ -627,6 +637,104 @@ func broadcast_dub_watch(playing: bool) -> void:
 func _rpc_dub_watch(sid: int, playing: bool) -> void:
 	if sid != session_id: return
 	dub_watch.emit(playing)
+
+
+
+
+signal dub_roles_changed
+
+# slot -> the characters that slot dubs. host is authoritative; everyone else
+# only ever reads the copy it pushes.
+var dub_roles: Dictionary = {}
+
+# clip index -> slot, resolved once by the host and sent with dub_begin. every
+# peer must agree on this, and recomputing it locally would let a late roles
+# push give two players different answers for the same clip.
+var dub_clip_owners: PackedInt32Array = []
+
+
+func characters_for_slot(slot: int) -> PackedStringArray:
+	return PackedStringArray(dub_roles.get(slot, PackedStringArray()))
+
+
+func slot_for_character(character: String) -> int:
+	var best: int = -1
+	for slot: int in dub_roles:
+		if slot < 0 or slot >= slot_count(): continue
+		if not characters_for_slot(slot).has(character): continue
+		if best < 0 or slot < best: best = slot
+	return best
+
+
+func anyone_picked() -> bool:
+	for slot: int in dub_roles:
+		if not characters_for_slot(slot).is_empty(): return true
+	return false
+
+
+func slots_without_a_character() -> PackedStringArray:
+	var out: PackedStringArray = []
+	for slot: int in slot_count():
+		if characters_for_slot(slot).is_empty(): out.append(player_name_for_slot(slot))
+	return out
+
+
+func set_my_dub_characters(characters: PackedStringArray) -> void:
+	if not is_online():
+		dub_roles[0] = characters
+		dub_roles_changed.emit()
+		return
+	if is_host(): set_dub_characters_for_slot(my_slot(), characters)
+	else: _rpc_claim_characters.rpc_id(1, session_id, characters)
+
+
+# host only. also used by the auto split button.
+func set_dub_characters_for_slot(slot: int, characters: PackedStringArray) -> void:
+	if not is_host(): return
+	dub_roles[slot] = characters
+	_push_dub_roles()
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_claim_characters(sid: int, characters: PackedStringArray) -> void:
+	if not is_host(): return
+	if sid != session_id: return
+	# trust the sender's peer id, never a slot it sends us.
+	var slot: int = slot_for_peer(multiplayer.get_remote_sender_id())
+	if slot < 0: return
+	dub_roles[slot] = characters
+	_push_dub_roles()
+
+
+func _push_dub_roles() -> void:
+	if is_online(): _rpc_dub_roles.rpc(session_id, dub_roles)
+	dub_roles_changed.emit()
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_dub_roles(sid: int, roles: Dictionary) -> void:
+	if sid != session_id: return
+	dub_roles = roles
+	dub_roles_changed.emit()
+
+
+# clip_characters is one PackedStringArray per clip, in performance order.
+func resolve_dub_owners(clip_characters: Array) -> PackedInt32Array:
+	var owners: PackedInt32Array = []
+	var slots: int = maxi(1, slot_count())
+	# clips nobody claimed are dealt round robin, counted separately so that a
+	# pack where one character has most of the lines still splits the leftovers.
+	var spare: int = 0
+	for i: int in clip_characters.size():
+		var owner: int = -1
+		for character: String in PackedStringArray(clip_characters[i]):
+			owner = slot_for_character(character)
+			if owner >= 0: break
+		if owner < 0:
+			owner = spare % slots
+			spare += 1
+		owners.append(owner)
+	return owners
 
 
 func _on_dub_should_start(folder: String, clip_paths: PackedStringArray) -> void:

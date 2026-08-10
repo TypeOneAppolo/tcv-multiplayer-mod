@@ -1,6 +1,17 @@
 extends Node
 # dev tool, not shipped. run two copies with -- host and -- client.
 
+# host takes Tuco, client takes Heisenberg. the untagged clip and the one for a
+# character nobody picked are dealt out in turn, so they land on 0 then 1.
+var CLIP_CHARACTERS: Array = [
+	PackedStringArray(["Tuco"]),
+	PackedStringArray(["Heisenberg"]),
+	PackedStringArray(["Tuco"]),
+	PackedStringArray([]),
+	PackedStringArray(["Nobody"]),
+]
+var EXPECTED_OWNERS: PackedInt32Array = PackedInt32Array([0, 1, 0, 0, 1])
+
 func _ready() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	if args.is_empty(): return
@@ -56,6 +67,14 @@ func _run_host() -> void:
 	await Net.barrier("t1")
 	print("NETTEST | host cleared barrier again")
 
+	Net.set_my_dub_characters(PackedStringArray(["Tuco"]))
+	await get_tree().create_timer(2.5).timeout
+	var owners: PackedInt32Array = Net.resolve_dub_owners(CLIP_CHARACTERS)
+	print("NETTEST | roles=%s owners=%s" % [str(Net.dub_roles), str(owners)])
+	if owners == EXPECTED_OWNERS: print("NETTEST PASS | host resolved the cast")
+	else: print("NETTEST FAIL | host resolved %s, wanted %s" % [str(owners), str(EXPECTED_OWNERS)])
+	Net.broadcast_dub_begin(owners)
+
 	await get_tree().create_timer(2.0).timeout
 	print("NETTEST | HOST DONE")
 	get_tree().quit()
@@ -92,6 +111,12 @@ func _run_client() -> void:
 
 	await Net.barrier("t1")
 	print("NETTEST | client cleared barrier again")
+
+	Net.set_my_dub_characters(PackedStringArray(["Heisenberg"]))
+	await Net.dub_begin
+	print("NETTEST | client roles=%s owners=%s" % [str(Net.dub_roles), str(Net.dub_clip_owners)])
+	if Net.dub_clip_owners == EXPECTED_OWNERS: print("NETTEST PASS | client agrees on the cast")
+	else: print("NETTEST FAIL | client got %s, wanted %s" % [str(Net.dub_clip_owners), str(EXPECTED_OWNERS)])
 
 	print("NETTEST | CLIENT DONE")
 	get_tree().quit()

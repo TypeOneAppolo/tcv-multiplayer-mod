@@ -26,13 +26,18 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MOD = HERE / "mod"
 
-GAME_VERSION = "0.5.1"
-## Official Windows 0.5.1 builds this mod has been tested against. Both ship
-## identical scripts -- they differ only in which renderer the project forces --
-## so the same patches apply to either.
+## Versions this mod knows how to patch. Everything in mod/patches/common
+## applies to all of them; mod/patches/v<version> holds the files that differ.
+SUPPORTED_VERSIONS = ["0.5.1", "0.5.2"]
+GAME_VERSION = " or ".join(SUPPORTED_VERSIONS)
+
+## Official Windows builds this mod has been tested against. The two 0.5.1
+## builds ship identical scripts -- they differ only in which renderer the
+## project forces -- so the same patches apply to either.
 KNOWN_GAME_SIZES = {
     211382192: "0.5.1 compatibility build",
     211382048: "0.5.1 build",
+    199462432: "0.5.2 dev-2 compatibility build",
 }
 
 GODOT_VERSION = "4.4.1-stable"
@@ -241,7 +246,7 @@ def parse_hunks(patch_text: str) -> list[tuple[int, list[str]]]:
     return hunks
 
 
-def apply_patch(target: Path, patch_text: str) -> None:
+def apply_patch(target: Path, patch_text: str, version: str = "") -> None:
     """Apply a unified diff, matching each hunk by its context.
 
     Deliberately strict: a hunk that cannot be located is an error rather than
@@ -276,8 +281,10 @@ def apply_patch(target: Path, patch_text: str) -> None:
                 break
         if found < 0:
             raise Failed(f"{target.name}: hunk {index} does not match.\n"
-                         "  Your game version is probably not "
-                         f"{GAME_VERSION}, or the project is already patched.")
+                         f"  This build looks like {version or 'an unknown version'}, "
+                         "but its scripts are not what the mod expects.\n"
+                         "  Either it is a version this mod has not caught up with, "
+                         "or the project is already patched.")
         lines[found:found + len(old)] = new
         offset += len(new) - len(old)
     write_text(target, "\n".join(lines))
@@ -507,22 +514,44 @@ def patch_project_godot(work: Path) -> None:
     write_text(path, text)
 
 
+def detect_version(work: Path) -> str:
+    """Read the game version out of the decompiled project.godot."""
+    match = re.search(r'config/version="([^"]+)"', read_text(work / "project.godot"))
+    if not match:
+        raise Failed("project.godot has no config/version -- unexpected game build")
+    return match.group(1)
+
+
+def patch_set_for(version: str) -> list[Path]:
+    """Patches for this version: the shared ones, then its own overrides."""
+    version_dir = MOD / "patches" / ("v" + version.replace(".", "_"))
+    if not version_dir.is_dir():
+        raise Failed(
+            f"this build reports version {version}, which the mod does not "
+            f"handle yet.\n  Supported: {', '.join(SUPPORTED_VERSIONS)}.")
+    return sorted((MOD / "patches" / "common").glob("*.patch")) + \
+        sorted(version_dir.glob("*.patch"))
+
+
 def apply_mod(work: Path) -> None:
     if (work / "net" / "net_manager.gd").exists():
         raise Failed("this project already contains the mod")
 
+    version = detect_version(work)
+    say("mod", f"project reports version {version}")
+
     say("mod", f"repaired {repair_node_paths(work)} decompiler node-path artifacts")
 
     shutil.copytree(MOD / "net", work / "net", dirs_exist_ok=True)
-    say("mod", "added net/net_manager.gd, net/lobby.gd")
+    say("mod", "added net/net_manager.gd, net/lobby.gd, net/dub_character_picker.gd")
 
     count = 0
-    for patch in sorted((MOD / "patches").glob("*.patch")):
+    for patch in patch_set_for(version):
         rel = patch.name[: -len(".patch")].replace("__", "/")
         target = work / rel
         if not target.is_file():
             raise Failed(f"expected game file missing: {rel}")
-        apply_patch(target, read_text(patch))
+        apply_patch(target, read_text(patch), version)
         count += 1
     say("mod", f"patched {count} game scripts")
 
@@ -558,7 +587,8 @@ def main(argv: list[str]) -> int:
         description="Build The Choicer Voicer multiplayer mod from your own copy of the game.",
         epilog="You need to own the game. This tool never downloads it.")
     ap.add_argument("game_exe", nargs="?",
-                    help="your official TheChoicerVoicer 0.5.1 Windows exe")
+                    help="your official TheChoicerVoicer Windows exe "
+                         f"({' or '.join(SUPPORTED_VERSIONS)})")
     ap.add_argument("-o", "--output", default=DEFAULT_OUTPUT,
                     help=f"where to write the modded exe (default: {DEFAULT_OUTPUT})")
     ap.add_argument("--project", metavar="DIR",

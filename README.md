@@ -20,10 +20,10 @@ mic on their own pc and it all stays in sync, so one person performs at a time,
 the host clicks through the dialogue for everybody, and the scores get worked out
 in one place so you're not all sat looking at different numbers.
 
-Works for the normal game show and for dub mode, where you take turns on
-alternating clips and then watch the finished thing together.
+Works for the normal game show and for dub mode, where you pick which character
+you're dubbing and then watch the finished thing together.
 
-**Windows 0.5.1 only. You need to own the game.**
+**Windows 0.5.1 and 0.5.2 dev-2. You need to own the game.**
 
 ## contents
 
@@ -145,6 +145,22 @@ instead. 2 to 4 players.
    normal game show, or **Start (dub mode)**, picks a pack, and everyone gets
    dragged into the match together.
 
+### picking who you dub
+
+Dub mode opens on a casting screen. Tick the characters you want and everyone
+sees the list fill in as people choose. Every clip goes to whoever took that
+character, so if you take Tuco and someone else takes Heisenberg you each get
+your own lines instead of just alternating.
+
+Nothing has to line up neatly. Clips for a character nobody picked, and clips the
+pack doesn't tag at all, get shared out evenly. If two of you pick the same
+character the one higher up the list gets those clips, and the screen warns you.
+The host can hit **Split the cast for us** to deal the characters out, and starts
+everyone with **Begin dub**.
+
+Packs that don't tag their clips with characters still work, they just split
+evenly the way they always did.
+
 The host drives everything. They click through the dialogue, the replays and the
 end of round menu for the whole table so nobody ends up out of step. When it's
 your turn to perform your mic opens on your machine and only yours. Everyone else
@@ -190,8 +206,9 @@ person too.
 **It can't find my game.** Drag your game exe onto `Install.bat`, or paste the
 full path when it asks. It only auto checks itch, downloads and desktop.
 
-**The installer stops with a "hunk does not match" error.** Your game isn't
-Windows 0.5.1. That's the only version the patches are written against.
+**The installer stops with a "hunk does not match" error.** Your game isn't one
+of the versions the patches are written against. It handles Windows 0.5.1 and
+0.5.2 dev-2, and it tells you which one it thinks you gave it.
 
 **Antivirus flags the download.** See [is this a virus](#is-this-a-virus).
 
@@ -252,21 +269,29 @@ send one performance per turn, and stop everyone drifting apart between phases.
 - Every show carries a generation stamp. Round state is keyed by round number and
   contestant slot and both of those restart at zero, so without it the leftovers
   of a finished match look exactly like a fresh one.
+- The host works out who dubs which clip once and sends the whole list when the
+  dub starts. Everyone could work it out themselves from the same picks, but then
+  a late change would quietly give two people different answers for one clip.
 
 What's in `mod/`:
 
 ```
-mod/net/net_manager.gd    all the netcode, one autoload
-mod/net/lobby.gd          the lobby screen, built in code
-mod/net/_selftest.gd      compiles every script in the project
-mod/net/_nettest.gd       headless host/client smoke test
-mod/patches/*.patch       edits to 7 of the game's scripts
-mod/export_presets.cfg    the windows export preset
+mod/net/net_manager.gd            all the netcode, one autoload
+mod/net/lobby.gd                  the lobby screen, built in code
+mod/net/dub_character_picker.gd   the casting screen, built in code
+mod/net/_selftest.gd              compiles every script in the project
+mod/net/_nettest.gd               headless host/client smoke test
+mod/patches/common/*.patch        edits that apply to every version
+mod/patches/v0_5_1/*.patch        the files that differ on 0.5.1
+mod/patches/v0_5_2/*.patch        the files that differ on 0.5.2
+mod/export_presets.cfg            the windows export preset
 ```
 
-Two new files and about 370 changed lines across 7 of the game's scripts. The
-installer also fixes a gdRE bug where it writes node paths as `$A / B`, which
-every decompiled build needs sorting whether you're modding it or not.
+Three new files and about 450 changed lines across 7 of the game's scripts. The
+installer reads `config/version` out of the decompiled project and picks the
+right patch set, so supporting a new build usually means one extra folder. It
+also fixes a gdRE bug where it writes node paths as `$A / B`, which every
+decompiled build needs sorting whether you're modding it or not.
 
 ## working on it
 
@@ -299,8 +324,10 @@ against a clean decompile with the node path fix applied.
 ## rough edges
 
 - Lobby's on F9, not a menu button.
-- Windows 0.5.1 only. Anything else fails with a clear error when it goes to
-  patch it.
+- Windows 0.5.1 and 0.5.2 dev-2. Anything else fails with a clear error when it
+  goes to patch it.
+- Everyone needs the same build. The mod checks and kicks you out with a message
+  if you don't, but it can't mix a 0.5.1 host with a 0.5.2 client.
 - Twitch modes are singleplayer, haven't touched them.
 - Pack differences only get checked against the clips actually picked.
 
