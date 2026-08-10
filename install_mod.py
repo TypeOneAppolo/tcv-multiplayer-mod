@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Build The Choicer Voicer multiplayer mod from your own copy of the game.
-
-This mod ships no game code and no game assets. It is a set of edits that are
-applied to a copy of the game you already own: the script decompiles your exe
-on your machine, applies the mod, and re-exports. Nothing leaves your computer
-except downloads of Godot and gdRE Tools, both free and open source.
+"""Build the The Choicer Voicer multiplayer mod from a copy of the game you own.
 
     python install_mod.py "C:\\path\\to\\TheChoicerVoicer_0-5-1 stable compatibility.exe"
 
@@ -17,6 +12,7 @@ import argparse
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import urllib.request
@@ -26,14 +22,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MOD = HERE / "mod"
 
-## Versions this mod knows how to patch. Everything in mod/patches/common
-## applies to all of them; mod/patches/v<version> holds the files that differ.
 SUPPORTED_VERSIONS = ["0.5.1", "0.5.2"]
 GAME_VERSION = " or ".join(SUPPORTED_VERSIONS)
 
-## Official Windows builds this mod has been tested against. The two 0.5.1
-## builds ship identical scripts -- they differ only in which renderer the
-## project forces -- so the same patches apply to either.
 KNOWN_GAME_SIZES = {
     211382192: "0.5.1 compatibility build",
     211382048: "0.5.1 build",
@@ -50,25 +41,16 @@ GDRE_VERSION = "v2.6.3"
 GDRE_URL = ("https://github.com/GDRETools/gdsdecomp/releases/download/"
             "v2.6.3/GDRE_tools-v2.6.3-windows.zip")
 
-## The template archive is 1.15 GB of every platform Godot supports. Exporting a
-## Windows release build needs exactly one 32 MB file out of it, and GitHub's
-## downloads accept range requests, so we reach in and take just that one.
 TEMPLATE_MEMBER = "templates/windows_release_x86_64.exe"
 
 EXPORT_PRESET = "Windows Desktop"
 DEFAULT_OUTPUT = "TheChoicerVoicer-Multiplayer.exe"
 
-## gdRE Tools writes node paths as `$A / B`, which is not valid GDScript -- it
-## parses as division. Every decompiled build needs this before it will run, mod
-## or no mod, so the fix is applied as a rule rather than shipped as a patch.
 NODE_PATH_RE = re.compile(r'(\$%?[A-Za-z_]\w*)((?:\s*/\s*%?[A-Za-z_]\w*)+)')
 
-## Added to [autoload] so the mod's network singleton exists everywhere.
 AUTOLOAD_ANCHOR = 'Metro="*res://common/globals/metro.gd"'
 AUTOLOAD_LINE = 'Net="*res://net/net_manager.gd"'
 
-## Turns on Godot's file logging, so players can send you a log when something
-## goes wrong online.
 LOG_ANCHOR = "settings/stdout/verbose_stdout=true"
 LOG_LINES = ['file_logging/enable_file_logging=true',
              'file_logging/log_path="user://logs/choicervoicer.log"',
@@ -76,12 +58,8 @@ LOG_LINES = ['file_logging/enable_file_logging=true',
 
 
 class Failed(Exception):
-    """Anything that should stop the build with a readable message."""
+    pass
 
-
-# --------------------------------------------------------------------------
-# small helpers
-# --------------------------------------------------------------------------
 
 def say(step: str, msg: str) -> None:
     print(f"[{step}] {msg}", flush=True)
@@ -92,9 +70,50 @@ def read_text(path: Path) -> str:
 
 
 def write_text(path: Path, text: str) -> None:
-    ## newline="" so the LF endings the decompiler produced survive on Windows.
     with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
+
+
+def _https_context() -> ssl.SSLContext | None:
+    if os.environ.get("TCV_INSECURE_SSL") == "1":
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    try:
+        import truststore
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:
+        pass
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    return None
+
+
+def install_https_opener() -> None:
+    ctx = _https_context()
+    if ctx is not None:
+        handler = urllib.request.HTTPSHandler(context=ctx)
+        urllib.request.install_opener(urllib.request.build_opener(handler))
+
+
+def _tls_hint(exc: Exception) -> str:
+    if "CERTIFICATE_VERIFY" not in str(exc):
+        return ""
+    return (
+        "\n\n  This is a TLS certificate error, not a problem with the mod.\n"
+        "  Your Python can't verify GitHub's certificate. Fixes, easiest first:\n"
+        "    1. pip install certifi truststore   then run this again.\n"
+        "    2. If your network or antivirus inspects HTTPS, truststore (above)\n"
+        "       picks up its root from the Windows store once installed.\n"
+        "    3. Last resort, skip verification for this run:\n"
+        "         set TCV_INSECURE_SSL=1     (cmd)\n"
+        "         $env:TCV_INSECURE_SSL=1    (PowerShell)\n"
+        "       then re-run."
+    )
 
 
 def download(url: str, dest: Path) -> Path:
@@ -115,15 +134,14 @@ def download(url: str, dest: Path) -> Path:
 
     try:
         urllib.request.urlretrieve(url, tmp, hook)
-    except Exception as exc:  # network, TLS, 404...
-        raise Failed(f"could not download {url}\n  {exc}")
+    except Exception as exc:
+        raise Failed(f"could not download {url}\n  {exc}{_tls_hint(exc)}")
     print()
     tmp.replace(dest)
     return dest
 
 
 def http_range(url: str, start: int, length: int) -> bytes:
-    """Fetch `length` bytes from `start`. Raises if the server ignores us."""
     req = urllib.request.Request(url, headers={"Range": f"bytes={start}-{start + length - 1}"})
     with urllib.request.urlopen(req) as resp:
         if resp.status != 206:
@@ -138,17 +156,10 @@ def http_size(url: str) -> int:
 
 
 def download_zip_member(url: str, member: str, dest: Path) -> None:
-    """Pull a single file out of a remote zip without fetching the whole thing.
-
-    Reads the zip's own index over HTTP range requests, then downloads only the
-    bytes belonging to `member`. Falls back to the caller on any surprise, since
-    a plain full download is always correct if slower.
-    """
     import struct
     import zlib
 
     total = http_size(url)
-    ## End-of-central-directory record lives in the last 64 KB at most.
     tail_len = min(65536 + 22, total)
     tail = http_range(url, total - tail_len, tail_len)
     eocd = tail.rfind(b"PK\x05\x06")
@@ -175,8 +186,6 @@ def download_zip_member(url: str, member: str, dest: Path) -> None:
         raise Failed(f"{member} is not in the archive")
 
     method, comp_size, uncomp_size, local_offset = found
-    ## The local header repeats the name and may have differently sized extras,
-    ## so read it rather than trusting the central directory's copy.
     head = http_range(url, local_offset, 30)
     if head[:4] != b"PK\x03\x04":
         raise Failed("archive index points at nothing")
@@ -213,12 +222,7 @@ def run(cmd: list[str], what: str) -> subprocess.CompletedProcess:
     return proc
 
 
-# --------------------------------------------------------------------------
-# unified diff application
-# --------------------------------------------------------------------------
-
 def parse_hunks(patch_text: str) -> list[tuple[int, list[str]]]:
-    """Return [(old_start_line, body_lines)] from a unified diff."""
     lines = patch_text.split("\n")
     hunks: list[tuple[int, list[str]]] = []
     i = 0
@@ -234,12 +238,11 @@ def parse_hunks(patch_text: str) -> list[tuple[int, list[str]]]:
             line = lines[i]
             if line.startswith("@@") or line.startswith("--- ") or line.startswith("+++ "):
                 break
-            if line.startswith(("\\",)):  # "\ No newline at end of file"
+            if line.startswith(("\\",)):
                 i += 1
                 continue
             body.append(line)
             i += 1
-        ## diff can leave one trailing empty element from the final newline.
         while body and body[-1] == "":
             body.pop()
         hunks.append((start, body))
@@ -247,12 +250,6 @@ def parse_hunks(patch_text: str) -> list[tuple[int, list[str]]]:
 
 
 def apply_patch(target: Path, patch_text: str, version: str = "") -> None:
-    """Apply a unified diff, matching each hunk by its context.
-
-    Deliberately strict: a hunk that cannot be located is an error rather than
-    something to force through, because a half-applied script produces a build
-    that compiles and then misbehaves in a match.
-    """
     lines = read_text(target).split("\n")
     offset = 0
     for index, (start, body) in enumerate(parse_hunks(patch_text), 1):
@@ -264,14 +261,12 @@ def apply_patch(target: Path, patch_text: str, version: str = "") -> None:
                 old.append(content)
             elif tag == "+":
                 new.append(content)
-            else:  # ' ' context, or '' for a blank context line
+            else:
                 old.append(content)
                 new.append(content)
 
         want = start - 1 + offset
         found = -1
-        ## Search outwards from where the diff said it should be, so the patch
-        ## still lands if an earlier hunk changed the line count.
         for delta in range(0, 400):
             for pos in {want + delta, want - delta}:
                 if 0 <= pos <= len(lines) - len(old) and lines[pos:pos + len(old)] == old:
@@ -290,12 +285,7 @@ def apply_patch(target: Path, patch_text: str, version: str = "") -> None:
     write_text(target, "\n".join(lines))
 
 
-# --------------------------------------------------------------------------
-# build steps
-# --------------------------------------------------------------------------
-
 def steam_libraries() -> list[Path]:
-    """Every Steam library folder on this machine, not just the default one."""
     roots: list[Path] = []
     for env in ("ProgramFiles(x86)", "ProgramFiles"):
         base = os.environ.get(env)
@@ -321,7 +311,6 @@ def steam_libraries() -> list[Path]:
 
 
 def find_game_exe() -> list[Path]:
-    """Guess where the player keeps the game. Best matches first."""
     candidates: list[Path] = []
     seen: set[str] = set()
 
@@ -330,7 +319,6 @@ def find_game_exe() -> list[Path]:
         if key in seen or not path.is_file():
             return
         seen.add(key)
-        ## Never offer a build this script produced.
         if path.name.lower() == DEFAULT_OUTPUT.lower():
             return
         candidates.append(path)
@@ -346,7 +334,6 @@ def find_game_exe() -> list[Path]:
         if not place.is_dir():
             continue
         try:
-            ## Two levels down covers "Downloads/TheChoicerVoicer 0.5.1 (Windows)/x.exe"
             for pattern in ("TheChoicerVoicer*.exe", "*/TheChoicerVoicer*.exe",
                             "*/*/TheChoicerVoicer*.exe"):
                 for hit in place.glob(pattern):
@@ -354,13 +341,11 @@ def find_game_exe() -> list[Path]:
         except OSError:
             continue
 
-    ## An exact size match is almost certainly the right build.
     candidates.sort(key=lambda p: (p.stat().st_size not in KNOWN_GAME_SIZES, str(p).lower()))
     return candidates
 
 
 def choose_game_exe() -> Path:
-    """Interactive pick, for when the script is double-clicked with no arguments."""
     print("Looking for your copy of the game...")
     found = find_game_exe()
 
@@ -389,13 +374,6 @@ def choose_game_exe() -> Path:
 
 
 def check_game_exe(exe: Path) -> None:
-    """Report what we think this is. Never fatal.
-
-    The real check is the patches themselves: every edit is matched against the
-    surrounding lines of the script it belongs to, so a version this mod cannot
-    handle fails clearly a few seconds later instead of building something
-    subtly broken.
-    """
     if not exe.is_file():
         raise Failed(f"no such file: {exe}")
     known = KNOWN_GAME_SIZES.get(exe.stat().st_size)
@@ -425,7 +403,7 @@ def get_gdre(cache: Path, supplied: str | None) -> Path:
 def get_godot(cache: Path, supplied: str | None) -> Path:
     if supplied:
         path = Path(supplied)
-        if path.is_dir():  # the release unzips to a folder of the same name
+        if path.is_dir():
             inner = list(path.glob("Godot_v*_win64.exe"))
             if inner:
                 return inner[0]
@@ -457,7 +435,6 @@ def install_full_templates(cache: Path, dest: Path) -> None:
         for entry in zf.namelist():
             if entry.endswith("/"):
                 continue
-            ## Entries live under "templates/"; flatten that away.
             name = entry.split("/", 1)[1] if "/" in entry else entry
             with zf.open(entry) as src, open(dest / name, "wb") as dst:
                 shutil.copyfileobj(src, dst)
@@ -515,7 +492,6 @@ def patch_project_godot(work: Path) -> None:
 
 
 def detect_version(work: Path) -> str:
-    """Read the game version out of the decompiled project.godot."""
     match = re.search(r'config/version="([^"]+)"', read_text(work / "project.godot"))
     if not match:
         raise Failed("project.godot has no config/version -- unexpected game build")
@@ -523,7 +499,6 @@ def detect_version(work: Path) -> str:
 
 
 def patch_set_for(version: str) -> list[Path]:
-    """Patches for this version: the shared ones, then its own overrides."""
     version_dir = MOD / "patches" / ("v" + version.replace(".", "_"))
     if not version_dir.is_dir():
         raise Failed(
@@ -561,9 +536,6 @@ def apply_mod(work: Path) -> None:
 
 
 def export(godot: Path, work: Path, output: Path) -> None:
-    ## A freshly decompiled project has no .godot/, so assets must be imported
-    ## before anything can be exported. --import is the 4.4 way; the editor
-    ## round trip is the fallback for builds that predate it.
     say("build", "importing project assets (this takes a minute)")
     probe = subprocess.run([str(godot), "--headless", "--path", str(work), "--import"],
                            capture_output=True, text=True, errors="replace")
@@ -579,8 +551,6 @@ def export(godot: Path, work: Path, output: Path) -> None:
     if not output.is_file():
         raise Failed("the export reported success but produced no file")
 
-
-# --------------------------------------------------------------------------
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
@@ -604,13 +574,14 @@ def main(argv: list[str]) -> int:
                     help="do not delete the decompiled project afterwards")
     args = ap.parse_args(argv)
 
+    install_https_opener()
+
     if not MOD.is_dir():
         raise Failed(f"mod/ folder missing next to {Path(__file__).name}")
 
     cache = Path(args.cache)
     work = Path(args.work)
 
-    ## Modder mode: patch a project directory in place, no exe, no export.
     if args.project:
         work = Path(args.project)
         if not (work / "project.godot").is_file():
