@@ -16,6 +16,16 @@ const CHUNK_SIZE: int = 24576
 const PERFORMANCE_TIMEOUT: float = 60.0
 const BARRIER_TIMEOUT: float = 90.0
 
+# ENet drops a peer that stops acking for 30s by default. Loading a match scene
+# blocks whichever machine is doing it -- the studio model, the contestant packs
+# and the dub video all load on the main thread inside the base game, where the
+# mod can't yield for them -- and on a slow disk that alone can outlast 30s and
+# take the lobby down with it. Given a barrier waits 90s before it gives up on
+# somebody, the connection has no business dying before then.
+const PEER_TIMEOUT_LIMIT: int = 32
+const PEER_TIMEOUT_MIN: int = 15000
+const PEER_TIMEOUT_MAX: int = 90000
+
 
 func log_net(msg: String) -> void:
 	print("[NET %s] %s" % [Time.get_time_string_from_system(), msg])
@@ -171,8 +181,17 @@ func _wire_signals() -> void:
 		multiplayer.server_disconnected.connect(_on_server_disconnected)
 
 
+func _relax_timeout(id: int) -> void:
+	var enet: = multiplayer.multiplayer_peer as ENetMultiplayerPeer
+	if enet == null: return
+	var link: ENetPacketPeer = enet.get_peer(id)
+	if link == null: return
+	link.set_timeout(PEER_TIMEOUT_LIMIT, PEER_TIMEOUT_MIN, PEER_TIMEOUT_MAX)
+
+
 func _on_peer_connected(id: int) -> void:
 	log_net("peer %d connected" % id)
+	_relax_timeout(id)
 
 
 func _on_peer_disconnected(id: int) -> void:
@@ -771,7 +790,17 @@ func resolve_dub_owners(clip_characters: Array) -> PackedInt32Array:
 
 func _on_dub_should_start(folder: String, clip_paths: PackedStringArray) -> void:
 	if is_host(): return
-	var res: = GameplayResourceDubMode.new(folder)
+	_loading_hint("The host has started. Loading the dub pack...")
+	# a dub pack drags the video in with it, so this is the slowest load in the
+	# mod by far. the host already does it on a thread in clip_selection_dub;
+	# doing it inline here froze the joiner until the host's ENet gave up on it.
+	var thread: = Thread.new()
+	thread.start(func() -> GameplayResourceDubMode: return GameplayResourceDubMode.new(folder))
+	while thread.is_alive(): await get_tree().process_frame
+	var res: GameplayResourceDubMode = thread.wait_to_finish()
+	if not is_online():
+		_loading_hint("")
+		return
 	if res.failed_to_load or res.no_video_file:
 		_abort_to_menu("Cannot start: you don't have the dub pack '%s'." % folder.trim_suffix("/").get_file())
 		return
@@ -793,7 +822,17 @@ func _on_dub_should_start(folder: String, clip_paths: PackedStringArray) -> void
 	if get_tree().get_root().has_node("World"): M.world.enter_dub_mode()
 
 
+# the joiner has no idea the host has pressed anything until its scene changes,
+# and the load in between is the slowest part of joining a show. say so. an empty
+# string takes the hint back down.
+func _loading_hint(text: String) -> void:
+	if not get_tree().get_root().has_node("World"): return
+	if text.is_empty(): M.world.ActiveHint(false)
+	else: M.world.ActiveHint(true, text, false)
+
+
 func _abort_to_menu(reason: String) -> void:
+	_loading_hint("")
 	log_net("ABORT: %s" % reason)
 	connection_failed.emit(reason)
 	leave()
@@ -811,6 +850,11 @@ func apply_roster_to_metro() -> void:
 	Metro.current_players = members
 
 
+# decoding a clip is not quick, and ENet only gets polled between frames. doing a
+# whole pack in one go stops us acking anything, and the host drops a peer that
+# has gone quiet -- after 30 seconds on a real link, which is exactly what the
+# joiner saw: a frozen lobby, then dropped, while the host was already playing.
+# so come up for air after every clip.
 func rebuild_clip_set(paths: PackedStringArray) -> PackedStringArray:
 	var clips: Array[OmniClip] = []
 	var missing: PackedStringArray = []
@@ -819,19 +863,30 @@ func rebuild_clip_set(paths: PackedStringArray) -> PackedStringArray:
 		clip.generate_from_audio_file_exact(p)
 		if clip.clip_audio: clips.append(clip)
 		else: missing.append(p)
+		await get_tree().process_frame
+		if not is_online(): return missing
 	if missing.is_empty(): Metro.gameplay_omniclip_set = clips
 	return missing
 
 
 func _ready() -> void:
-	match_should_start.connect(_on_match_should_start)
-	dub_should_start.connect(_on_dub_should_start)
+	# CONNECT_DEFERRED for the same reason the lobby uses it: these fire from
+	# inside the multiplayer poll. Loading a pack and swapping the scene from in
+	# there is what stranded joiners on the lobby screen while the host played on.
+	match_should_start.connect(_on_match_should_start, CONNECT_DEFERRED)
+	dub_should_start.connect(_on_dub_should_start, CONNECT_DEFERRED)
 
 
 func _on_match_should_start(clip_paths: PackedStringArray) -> void:
 	if is_host(): return
-	var missing: PackedStringArray = rebuild_clip_set(clip_paths)
+	_loading_hint("The host has started. Loading the clips...")
+	var missing: PackedStringArray = await rebuild_clip_set(clip_paths)
+	# leave() during the load already took us back to the menu.
+	if not is_online():
+		_loading_hint("")
+		return
 	if not missing.is_empty():
+		_loading_hint("")
 		log_net("ABORT: missing %d of %d clips, first is %s" % [missing.size(), clip_paths.size(), missing[0]])
 		var names: PackedStringArray = []
 		for p: String in missing: names.append(p.get_file())

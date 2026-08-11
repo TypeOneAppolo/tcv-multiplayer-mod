@@ -288,6 +288,18 @@ from. It now sends a clip count and a checksum per pack instead, a couple of
 kilobytes. Everyone needs to run the installer again to pick this up, and older
 builds get kicked for a version mismatch rather than doing this quietly.
 
+**The host presses start and goes into the match, but the joiner sits on the
+online match screen and gets dropped about half a minute later.** That was a bug,
+fixed after v1.1.1. When the host started, the joiner loaded the whole pack in
+one go on its main thread, so it stopped answering the host for as long as that
+took. ENet gives up on a peer that has gone quiet for 30 seconds, which is where
+the timing came from, and the frozen window carried on showing the lobby the
+whole time, which is why it looked like nothing had happened. The joiner now
+loads a clip at a time and keeps answering while it does, tells you it's loading,
+and neither end gives up on the other before 90 seconds. Rebuild with the
+installer to pick this up. A rebuilt joiner is fixed even if the host is still on
+an older build, and vice versa, so you don't have to do it all at once.
+
 **The lobby says our voice packs aren't identical.** It compares a checksum of
 the clip file names in each pack, so it means the folders genuinely differ, even
 if you both downloaded the same thing. Usual causes are one of you unzipping a
