@@ -11,7 +11,10 @@ signal scores_received(scores: PackedInt32Array)
 
 const PORT: int = 7654
 const MAX_PLAYERS: int = 4
-const PROTOCOL_VERSION: int = 3
+# 4: pack hashes cover the contents of a pack and not the folder name, so the
+# manifest from an older build would compare against nothing and read as a
+# missing pack. better to say so than to let it look broken.
+const PROTOCOL_VERSION: int = 4
 const CHUNK_SIZE: int = 24576
 const PERFORMANCE_TIMEOUT: float = 60.0
 const BARRIER_TIMEOUT: float = 90.0
@@ -331,23 +334,71 @@ var _manifest_cache: Dictionary = {}
 # joiners were being kicked at the 30 second mark with an empty lobby in front
 # of them. audio file names only; hashing captions and pack icons gave constant
 # false mismatches.
+#
+# the hash covers what is inside the pack and deliberately not the folder it sits
+# in. two people who downloaded the same pack often have it under different folder
+# names -- 'SML - Mushroom Pizza' against 'sml_-_mushroom_pizza' -- and that used
+# to read as two packs neither of them had, which then threw the joiner out of a
+# match over clips it was holding all along.
 func voice_pack_manifest() -> Dictionary:
 	if not _manifest_cache.is_empty(): return _manifest_cache
 	var out: Dictionary = {}
 	var root: String = FileManager.MODPACKS_VOICE
 	for pack: String in DirAccess.get_directories_at(root):
+		var pack_root: String = root.path_join(pack)
 		var entries: PackedStringArray = []
-		var stack: Array[String] = [root.path_join(pack)]
+		var stack: Array[String] = [pack_root]
 		while not stack.is_empty():
 			var dir_path: String = stack.pop_back()
 			for sub: String in DirAccess.get_directories_at(dir_path):
 				stack.append(dir_path.path_join(sub))
 			for f: String in DirAccess.get_files_at(dir_path):
-				if CLIP_EXTENSIONS.has(f.get_extension().to_lower()):
-					entries.append(dir_path.trim_prefix(root).path_join(f))
+				if not CLIP_EXTENSIONS.has(f.get_extension().to_lower()): continue
+				# backing tracks, _ignore and the dub recordings the game writes
+				# itself. it never performs these, so counting them only ever
+				# invented a difference between two identical packs.
+				if f.begins_with("_"): continue
+				entries.append(dir_path.trim_prefix(pack_root).path_join(f).trim_prefix("/"))
 		entries.sort()
 		out[pack] = {"clips": entries.size(), "hash": "\n".join(entries).hash()}
 	_manifest_cache = out
+	return out
+
+
+# their folder name -> the folder holding the same clips here. a pack we haven't
+# got simply doesn't appear.
+func pack_remap(their_manifest: Dictionary) -> Dictionary:
+	var by_hash: Dictionary = {}
+	var mine: Dictionary = voice_pack_manifest()
+	for name: String in mine:
+		by_hash[_as_dictionary(mine[name]).get("hash", 0)] = name
+	var out: Dictionary = {}
+	for their_name: String in their_manifest:
+		var h: Variant = _as_dictionary(their_manifest[their_name]).get("hash", 0)
+		if by_hash.has(h): out[their_name] = by_hash[h]
+	return out
+
+
+func _host_manifest() -> Dictionary:
+	return _as_dictionary(manifests.get(1, {}))
+
+
+# rewrite a packs_voice path the host sent us so it points at our own copy,
+# whatever we happen to have called the folder.
+func localise_path(path: String, remap: Dictionary) -> String:
+	var root: String = FileManager.MODPACKS_VOICE
+	if not path.begins_with(root): return path
+	var rest: String = path.trim_prefix(root)
+	var cut: int = rest.find("/")
+	var pack: String = rest if cut < 0 else rest.substr(0, cut)
+	if not remap.has(pack) or remap[pack] == pack: return path
+	var tail: String = "" if cut < 0 else rest.substr(cut)
+	return root.path_join(remap[pack]) + tail
+
+
+func localise_paths(paths: PackedStringArray, remap: Dictionary) -> PackedStringArray:
+	var out: PackedStringArray = []
+	for p: String in paths: out.append(localise_path(p, remap))
 	return out
 
 
@@ -358,20 +409,33 @@ func _as_dictionary(value: Variant) -> Dictionary:
 	return {}
 
 
+# matched on contents first, so a pack only gets mentioned when the clips really
+# do differ. a folder name that doesn't line up is no longer worth saying anything
+# about, because nothing downstream cares about it any more.
 func pack_differences(other: Dictionary) -> PackedStringArray:
 	var mine: Dictionary = voice_pack_manifest()
+	var my_hashes: Dictionary = {}
+	for k: String in mine: my_hashes[_as_dictionary(mine[k]).get("hash", 0)] = k
+	var their_hashes: Dictionary = {}
+	for k: String in other: their_hashes[_as_dictionary(other[k]).get("hash", 0)] = k
+
 	var diffs: PackedStringArray = []
 	for k: String in mine:
-		if not other.has(k):
-			diffs.append("'%s' -- they don't have this pack at all" % k)
-			continue
 		var ours: Dictionary = _as_dictionary(mine[k])
-		var theirs: Dictionary = _as_dictionary(other[k])
-		if theirs.has("hash") and ours.get("hash") == theirs.get("hash"): continue
-		diffs.append("'%s' -- they have %d clip(s), you have %d" % [
-			k, int(theirs.get("clips", 0)), int(ours.get("clips", 0))])
+		if their_hashes.has(ours.get("hash", 0)): continue
+		# same name on both sides but different clips inside is the one case worth
+		# spelling out, because the counts usually tell you which of you is short.
+		if other.has(k):
+			var theirs: Dictionary = _as_dictionary(other[k])
+			diffs.append("'%s' -- they have %d clip(s), you have %d" % [
+				k, int(theirs.get("clips", 0)), int(ours.get("clips", 0))])
+		else:
+			diffs.append("'%s' -- they don't have this pack at all" % k)
 	for k: String in other:
-		if not mine.has(k): diffs.append("'%s' -- you don't have this pack at all" % k)
+		var theirs: Dictionary = _as_dictionary(other[k])
+		if my_hashes.has(theirs.get("hash", 0)): continue
+		if mine.has(k): continue
+		diffs.append("'%s' -- you don't have this pack at all" % k)
 	return diffs
 
 
@@ -791,6 +855,9 @@ func resolve_dub_owners(clip_characters: Array) -> PackedInt32Array:
 func _on_dub_should_start(folder: String, clip_paths: PackedStringArray) -> void:
 	if is_host(): return
 	_loading_hint("The host has started. Loading the dub pack...")
+	var remap: Dictionary = pack_remap(_host_manifest())
+	folder = localise_path(folder, remap)
+	clip_paths = localise_paths(clip_paths, remap)
 	# a dub pack drags the video in with it, so this is the slowest load in the
 	# mod by far. the host already does it on a thread in clip_selection_dub;
 	# doing it inline here froze the joiner until the host's ENet gave up on it.
@@ -880,7 +947,9 @@ func _ready() -> void:
 func _on_match_should_start(clip_paths: PackedStringArray) -> void:
 	if is_host(): return
 	_loading_hint("The host has started. Loading the clips...")
-	var missing: PackedStringArray = await rebuild_clip_set(clip_paths)
+	# the host's folder names are the host's business. point these at our copies.
+	var local_paths: PackedStringArray = localise_paths(clip_paths, pack_remap(_host_manifest()))
+	var missing: PackedStringArray = await rebuild_clip_set(local_paths)
 	# leave() during the load already took us back to the menu.
 	if not is_online():
 		_loading_hint("")

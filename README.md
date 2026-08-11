@@ -301,12 +301,20 @@ installer to pick this up. A rebuilt joiner is fixed even if the host is still o
 an older build, and vice versa, so you don't have to do it all at once.
 
 **The lobby says our voice packs aren't identical.** It compares a checksum of
-the clip file names in each pack, so it means the folders genuinely differ, even
-if you both downloaded the same thing. Usual causes are one of you unzipping a
-pack one level deeper than the other, or a download that didn't finish. It tells
-you the clip count each of you has for that pack, which is normally enough to
-spot which. It's only a warning, you can start anyway, and it only matters if the
-host picks clips out of that pack.
+the clip file names inside each pack, so it means the clips genuinely differ. It
+tells you the clip count each of you has for that pack, which is normally enough
+to spot which. Usual causes are one of you unzipping a pack one level deeper than
+the other, or a download that didn't finish. It's only a warning, you can start
+anyway, and it only matters if the host picks clips out of that pack.
+
+**It used to say that when our packs were fine.** Fixed after v1.1.2. Packs were
+matched up by their folder name, so the same pack under `SML - Mushroom Pizza` on
+one machine and `sml_-_mushroom_pizza` on another looked like two packs neither of
+you had. Worse, the joiner then got thrown back to the menu when the host started,
+over clips it was holding the whole time. Packs are matched on what's inside them
+now, so name the folders whatever you like. Backing tracks and the dub recordings
+the game writes itself no longer count towards the clip totals either, they were
+never performed.
 
 **Someone crashed or alt f4'd mid match.** Everyone else carries on after about a
 minute. It won't hang forever waiting for them.
