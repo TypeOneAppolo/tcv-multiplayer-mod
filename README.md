@@ -27,6 +27,7 @@ you're dubbing and then watch the finished thing together.
 
 ## contents
 
+- [Video tutorial](#video-tutorial)
 - [Quick start](#quick-start)
 - [You need to own the game](#you-need-to-own-the-game)
 - [Installing](#installing)
@@ -41,10 +42,27 @@ you're dubbing and then watch the finished thing together.
 - [Rough edges](#rough-edges)
 - [Credits](#credits)
 
+## video tutorial
+
+If you'd rather watch someone do it than read all this, there's a walkthrough of
+installing it and getting a game going:
+
+<p align="center">
+  <a href="https://youtu.be/YoHYlGWCE_g">
+    <img src="https://img.youtube.com/vi/YoHYlGWCE_g/maxresdefault.jpg" alt="Watch the install and setup walkthrough on YouTube" width="640">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://youtu.be/YoHYlGWCE_g">https://youtu.be/YoHYlGWCE_g</a>
+</p>
+
 ## quick start
 
 1. Buy the game: https://yeahmaybe.itch.io/the-choicer-voicer
-2. Download this repo as a zip and unzip it anywhere.
+2. Download this repo as a zip and unzip it anywhere. **Unzip it properly, don't
+   run Install.bat from inside the zip**, see
+   [troubleshooting](#troubleshooting).
 3. Double click **Install.bat** and wait a few minutes. It'll ask you to
    install python first if you haven't got it.
 4. Copy the host's voice packs to everyone else (see
@@ -203,6 +221,18 @@ positive rather than just turning your antivirus off. That fixes it for the next
 person too.
 
 ## troubleshooting
+
+**"can't open file ... install_mod.py: [Errno 2] No such file or directory"**,
+and the path it names has something like `Rar$DIa1234.5678.rartemp` or
+`Temp\7zO8B...` in it. You ran `Install.bat` from inside the zip or rar without
+unpacking it first. Double clicking a file inside an archive makes your archive
+program copy that one file out to a temp folder and run it there on its own, so
+`install_mod.py` and the `mod` folder never came with it.
+
+Right click the download, **Extract All** (or **Extract Here** in WinRAR), put it
+somewhere normal like your Desktop, and run `Install.bat` out of the folder that
+makes. The folder should have `Install.bat`, `install_mod.py` and a `mod` folder
+sat in it together.
 
 **It can't find my game.** Drag your game exe onto `Install.bat`, or paste the
 full path when it asks. It only auto checks itch, downloads and desktop.
