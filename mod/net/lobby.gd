@@ -1,6 +1,9 @@
 extends Control
 
 const ROW_HEIGHT: int = 34
+# ENet drops a peer it cannot reach after 30s of its own accord. say something
+# useful before that happens rather than letting the lobby sit there empty.
+const JOIN_TIMEOUT: float = 12.0
 const KOFI_URL: String = "https://ko-fi.com/appolodev"
 const GAMEBANANA_URL: String = "https://gamebanana.com/mods/702231"
 const SUPPORT_INSET: Vector2 = Vector2(48, 32)
@@ -27,8 +30,9 @@ func _ready() -> void:
 	# player list there takes the engine down with no error to show for it.
 	Net.player_list_changed.connect(_refresh, CONNECT_DEFERRED)
 	Net.connection_failed.connect(_on_error, CONNECT_DEFERRED)
-	Net.connected_to_lobby.connect(func() -> void: _set_status("Connected. Waiting for the host."))
-	Net.server_disconnected.connect(func() -> void: _on_error("Host closed the lobby."))
+	Net.connected_to_lobby.connect(_on_connected, CONNECT_DEFERRED)
+	Net.server_disconnected.connect(func() -> void: _on_error(
+		"Lost the connection to the host. Either they closed the lobby, or the link between you dropped."))
 	_refresh()
 	if Net.is_online():
 		if Net.is_host(): _set_status("Lobby still open. Choose the next pack when everyone is ready.")
@@ -189,6 +193,26 @@ func _on_join() -> void:
 	var err: Error = Net.join_game(address_field.text, name_field.text, Profile.contestant, int(port_field.text))
 	if err == OK:
 		_set_status("Connecting to %s..." % address_field.text)
+		_refresh()
+		_watch_the_join()
+
+
+func _on_connected() -> void:
+	_set_status("Connected. Waiting for the host to send the lobby.")
+	_refresh()
+
+
+# the handshake can succeed and the lobby still never arrive, which is what
+# people were hitting: an empty contestant list, a dead Ready box, and a silent
+# disconnect half a minute later.
+func _watch_the_join() -> void:
+	await get_tree().create_timer(JOIN_TIMEOUT).timeout
+	if not is_inside_tree(): return
+	if Net.is_host() or not Net.is_online() or Net.slot_count() > 0: return
+	_set_status(("The host hasn't sent the lobby after %d seconds.\n"
+		+ "Check they are hosting on port %s, and that the address you typed is the one "
+		+ "their end shows. On Hamachi that is the IPv4 address next to their name.") % [
+		int(JOIN_TIMEOUT), port_field.text])
 
 
 func _on_leave() -> void:
@@ -237,7 +261,13 @@ func _refresh() -> void:
 	name_field.editable = not online
 	address_field.editable = not online
 	port_field.editable = not online
-	ready_button.disabled = not online
+	# only once the host has actually put us in the roster. before that the tick
+	# goes nowhere and it just looks broken.
+	var seated: bool = online and Net.my_slot() >= 0
+	ready_button.disabled = not seated
+	if seated:
+		ready_button.set_pressed_no_signal(
+			bool(Net.players.get(Net.my_id(), {}).get("ready", false)))
 	start_button.visible = Net.is_host()
 	start_button.disabled = Net.slot_count() < 2
 	dub_button.visible = Net.is_host()
@@ -264,4 +294,5 @@ func _refresh() -> void:
 		var mismatched: PackedStringArray = Net.mismatched_players()
 		if mismatched.is_empty(): warning_label.text = ""
 		else:
-			warning_label.text = "FYI, pack differences: %s.\nOnly a problem if the host picks clips from those packs -- you can start anyway." % "; ".join(mismatched)
+			warning_label.text = ("Your voice packs are not identical: %s.\nThis is only a problem "
+				+ "if the host picks clips from those packs. Start anyway if you like.") % "; ".join(mismatched)

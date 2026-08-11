@@ -11,7 +11,7 @@ signal scores_received(scores: PackedInt32Array)
 
 const PORT: int = 7654
 const MAX_PLAYERS: int = 4
-const PROTOCOL_VERSION: int = 2
+const PROTOCOL_VERSION: int = 3
 const CHUNK_SIZE: int = 24576
 const PERFORMANCE_TIMEOUT: float = 60.0
 const BARRIER_TIMEOUT: float = 90.0
@@ -25,6 +25,11 @@ enum MODE {OFFLINE, HOST, CLIENT}
 var mode: MODE = MODE.OFFLINE
 var players: Dictionary = {}
 var slot_map: PackedInt32Array = []
+
+# peer -> voice pack summary. kept out of the roster because the roster is
+# resent every time anyone ticks Ready, and this only changes when someone
+# joins or leaves.
+var manifests: Dictionary = {}
 
 var _perf_inbox: Dictionary = {}
 var _perf_staging: Dictionary = {}
@@ -79,7 +84,9 @@ func host_game(player_name: String, pack: String, port: int = PORT) -> Error:
 	log_net("hosting on UDP %d as '%s'" % [port, player_name])
 	_wire_signals()
 	players.clear()
+	manifests.clear()
 	players[1] = _make_record(player_name, pack)
+	manifests[1] = voice_pack_manifest()
 	_rebuild_slots()
 	player_list_changed.emit()
 	return OK
@@ -96,6 +103,7 @@ func join_game(address: String, player_name: String, pack: String, port: int = P
 	log_net("dialling %s:%d" % [address, port])
 	_wire_signals()
 	players.clear()
+	manifests.clear()
 	_pending_name = player_name
 	_pending_pack = pack
 	return OK
@@ -106,7 +114,9 @@ func leave() -> void:
 	multiplayer.multiplayer_peer = null
 	mode = MODE.OFFLINE
 	players.clear()
+	manifests.clear()
 	slot_map = []
+	_manifest_cache.clear()
 	_reset_session_state()
 	player_list_changed.emit()
 
@@ -149,12 +159,7 @@ var _pending_pack: String = ""
 
 
 func _make_record(player_name: String, pack: String) -> Dictionary:
-	return {
-		"name": player_name,
-		"pack": pack,
-		"ready": false,
-		"manifest": voice_pack_manifest(),
-	}
+	return {"name": player_name, "pack": pack, "ready": false}
 
 
 func _wire_signals() -> void:
@@ -174,6 +179,7 @@ func _on_peer_disconnected(id: int) -> void:
 	log_net("peer %d disconnected" % id)
 	if is_host():
 		players.erase(id)
+		manifests.erase(id)
 		_rebuild_slots()
 		# roles are keyed by slot and the slots below the leaver just shifted
 		# up, so keeping them would hand someone else's characters over.
@@ -182,6 +188,7 @@ func _on_peer_disconnected(id: int) -> void:
 			log_net("cleared the dub casting, someone left while it was being picked")
 			_push_dub_roles()
 		_push_roster()
+		_push_manifests()
 	player_list_changed.emit()
 
 
@@ -201,7 +208,9 @@ func _on_server_disconnected() -> void:
 	log_net("host closed the connection, returning to menu")
 	mode = MODE.OFFLINE
 	players.clear()
+	manifests.clear()
 	slot_map = []
+	_manifest_cache.clear()
 	_reset_session_state()
 	server_disconnected.emit()
 	if get_tree().get_root().has_node("World"): M.world.CreateMenu()
@@ -220,9 +229,11 @@ func _rpc_register(version: int, player_name: String, pack: String, manifest: Di
 		_rpc_kick.rpc_id(sender, "Lobby is full (%d players max)." % MAX_PLAYERS)
 		return
 	log_net("'%s' joined (peer %d)" % [player_name, sender])
-	players[sender] = {"name": player_name, "pack": pack, "ready": false, "manifest": manifest}
+	players[sender] = _make_record(player_name, pack)
+	manifests[sender] = manifest
 	_rebuild_slots()
 	_push_roster()
+	_push_manifests()
 
 
 @rpc("authority", "call_remote", "reliable")
@@ -253,6 +264,16 @@ func _rpc_roster(new_players: Dictionary, new_slots: PackedInt32Array) -> void:
 	player_list_changed.emit()
 
 
+func _push_manifests() -> void:
+	if is_host(): _rpc_manifests.rpc(manifests)
+
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_manifests(new_manifests: Dictionary) -> void:
+	manifests = new_manifests
+	player_list_changed.emit()
+
+
 func set_ready(value: bool) -> void:
 	if is_host():
 		players[1]["ready"] = value
@@ -280,8 +301,19 @@ func everyone_ready() -> bool:
 
 const CLIP_EXTENSIONS: PackedStringArray = ["wav", "mp3", "ogg"]
 
-# audio file names only. hashing captions and pack icons gave constant false mismatches.
+# walking packs_voice is not free and the answer does not change while a lobby
+# is open, so it is worked out once and thrown away in leave().
+var _manifest_cache: Dictionary = {}
+
+
+# a clip count and a hash per pack, never the file names. sending the names was
+# hundreds of kilobytes on a normal install, and ENet gives a reliable packet it
+# cannot get across exactly 30 seconds before it drops the peer -- which is why
+# joiners were being kicked at the 30 second mark with an empty lobby in front
+# of them. audio file names only; hashing captions and pack icons gave constant
+# false mismatches.
 func voice_pack_manifest() -> Dictionary:
+	if not _manifest_cache.is_empty(): return _manifest_cache
 	var out: Dictionary = {}
 	var root: String = FileManager.MODPACKS_VOICE
 	for pack: String in DirAccess.get_directories_at(root):
@@ -295,8 +327,16 @@ func voice_pack_manifest() -> Dictionary:
 				if CLIP_EXTENSIONS.has(f.get_extension().to_lower()):
 					entries.append(dir_path.trim_prefix(root).path_join(f))
 		entries.sort()
-		out[pack] = entries
+		out[pack] = {"clips": entries.size(), "hash": "\n".join(entries).hash()}
+	_manifest_cache = out
 	return out
+
+
+# everything off the wire is checked, a peer running a doctored build should
+# only ever cost itself a warning line.
+func _as_dictionary(value: Variant) -> Dictionary:
+	if value is Dictionary: return value
+	return {}
 
 
 func pack_differences(other: Dictionary) -> PackedStringArray:
@@ -306,21 +346,11 @@ func pack_differences(other: Dictionary) -> PackedStringArray:
 		if not other.has(k):
 			diffs.append("'%s' -- they don't have this pack at all" % k)
 			continue
-		var ours: PackedStringArray = PackedStringArray(mine[k])
-		var theirs: PackedStringArray = PackedStringArray(other[k])
-		var they_lack: PackedStringArray = []
-		var they_have_extra: PackedStringArray = []
-		for f: String in ours:
-			if not theirs.has(f): they_lack.append(f.get_file())
-		for f: String in theirs:
-			if not ours.has(f): they_have_extra.append(f.get_file())
-		if they_lack.is_empty() and they_have_extra.is_empty(): continue
-		var bits: PackedStringArray = []
-		if not they_lack.is_empty():
-			bits.append("they're missing %d (%s)" % [they_lack.size(), ", ".join(they_lack.slice(0, 4))])
-		if not they_have_extra.is_empty():
-			bits.append("they have %d you don't (%s)" % [they_have_extra.size(), ", ".join(they_have_extra.slice(0, 4))])
-		diffs.append("'%s' -- %s" % [k, "; ".join(bits)])
+		var ours: Dictionary = _as_dictionary(mine[k])
+		var theirs: Dictionary = _as_dictionary(other[k])
+		if theirs.has("hash") and ours.get("hash") == theirs.get("hash"): continue
+		diffs.append("'%s' -- they have %d clip(s), you have %d" % [
+			k, int(theirs.get("clips", 0)), int(ours.get("clips", 0))])
 	for k: String in other:
 		if not mine.has(k): diffs.append("'%s' -- you don't have this pack at all" % k)
 	return diffs
@@ -330,7 +360,9 @@ func mismatched_players() -> PackedStringArray:
 	var out: PackedStringArray = []
 	for id: int in players:
 		if id == my_id(): continue
-		var diffs: PackedStringArray = pack_differences(players[id].get("manifest", {}))
+		# nothing to say until their manifest has actually landed
+		if not manifests.has(id): continue
+		var diffs: PackedStringArray = pack_differences(_as_dictionary(manifests[id]))
 		if not diffs.is_empty():
 			out.append("%s -- %s" % [players[id].get("name", "Player"), ", ".join(diffs)])
 	return out

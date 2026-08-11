@@ -39,6 +39,8 @@ func _run_host() -> void:
 
 	await get_tree().create_timer(4.0).timeout
 	print("NETTEST | roster=%d slots=%s" % [Net.players.size(), str(Net.slot_map)])
+	if Net.manifests.size() == Net.players.size(): print("NETTEST PASS | host has a pack summary per player")
+	else: print("NETTEST FAIL | host has %d summaries for %d players" % [Net.manifests.size(), Net.players.size()])
 
 	var take: AudioStreamWAV = _fake_take()
 	print("NETTEST | submitting %d bytes for slot 0" % take.data.size())
@@ -88,6 +90,8 @@ func _run_client() -> void:
 
 	await get_tree().create_timer(3.5).timeout
 	print("NETTEST | roster=%d slots=%s myslot=%d" % [Net.players.size(), str(Net.slot_map), Net.my_slot()])
+	if Net.manifests.has(1): print("NETTEST PASS | client has the host's pack summary")
+	else: print("NETTEST FAIL | client never got the host's pack summary")
 
 	var perf: Dictionary = await Net.await_performance(0)
 	var got: int = perf["wav"].data.size() if perf.has("wav") else -1
