@@ -133,8 +133,9 @@ installer again.
 
 On the networking side it runs on UDP port 7654. Over the internet the host has
 to forward that port on their router. If you'd rather not be messing about in
-there, ZeroTier, Tailscale or Radmin all work, you just connect on the virtual
-IPs instead. 2 to 4 players.
+there, ZeroTier, Tailscale, Radmin and Hamachi all work, you just connect on the
+virtual IPs instead. On Hamachi that's the IPv4 address shown next to the host's
+name, not their real one. 2 to 4 players.
 
 ## playing
 
@@ -216,6 +217,24 @@ of the versions the patches are written against. It handles Windows 0.5.1 and
 unsigned exe that got built on your machine a minute ago, so nothing vouches for
 it yet. Same thing happens to anybody building a Godot game.
 
+**"the export produced no file".** Godot built it and something deleted it out
+from under the installer, and that something is nearly always Defender. A fresh
+unsigned Godot exe is one of its favourite false positives, and it grabs the file
+the instant the build gets renamed to `.exe`, so Godot never sees anything go
+wrong. The installer now says so, prints the detection out of Defender's own log
+when it can find it, and waits while you sort it. Open PowerShell as
+administrator and allow the folder you're building in:
+
+```powershell
+Add-MpPreference -ExclusionPath "C:\path\to\the\folder"
+```
+
+Then press Enter back in the installer and it builds again, which only takes a
+minute the second time. Take the exclusion off afterwards with
+`Remove-MpPreference -ExclusionPath` if you'd rather not leave it there. If
+Defender already quarantined a copy, release it under Virus & threat protection
+→ Protection history.
+
 **F9 does nothing.** You have to be on the main menu, and it has to be the modded
 exe, not your original one.
 
@@ -229,6 +248,23 @@ folder.
 
 **Somebody got kicked for a different mod version.** They're on an older build of
 the mod. Everyone runs the installer again off the same version of this repo.
+
+**The joiner sees an empty lobby, no host name, a dead Ready box, and gets
+dropped after about half a minute.** That was a bug, fixed. The lobby used to
+send everyone the full file listing of every voice pack they owned, which ran to
+hundreds of kilobytes, and over a VPN link it never finished arriving. ENet gives
+up on a peer after exactly 30 seconds of that, which is where the timing came
+from. It now sends a clip count and a checksum per pack instead, a couple of
+kilobytes. Everyone needs to run the installer again to pick this up, and older
+builds get kicked for a version mismatch rather than doing this quietly.
+
+**The lobby says our voice packs aren't identical.** It compares a checksum of
+the clip file names in each pack, so it means the folders genuinely differ, even
+if you both downloaded the same thing. Usual causes are one of you unzipping a
+pack one level deeper than the other, or a download that didn't finish. It tells
+you the clip count each of you has for that pack, which is normally enough to
+spot which. It's only a warning, you can start anyway, and it only matters if the
+host picks clips out of that pack.
 
 **Someone crashed or alt f4'd mid match.** Everyone else carries on after about a
 minute. It won't hang forever waiting for them.
@@ -272,6 +308,11 @@ send one performance per turn, and stop everyone drifting apart between phases.
 - The host works out who dubs which clip once and sends the whole list when the
   dub starts. Everyone could work it out themselves from the same picks, but then
   a late change would quietly give two people different answers for one clip.
+- Voice packs are compared by a clip count and a checksum per pack. Sending the
+  file names was hundreds of kilobytes on a normal install, and a reliable packet
+  that can't get across costs you the peer 30 seconds later. The pack summaries
+  also travel separately from the roster, which gets resent every time anybody
+  ticks Ready.
 
 What's in `mod/`:
 
