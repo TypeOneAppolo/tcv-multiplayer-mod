@@ -12,6 +12,12 @@ setlocal
 cd /d "%~dp0"
 title The Choicer Voicer - Multiplayer Mod Installer
 
+rem Running this straight out of the zip or rar, without extracting first, drops
+rem a single copy of the .bat into a temp folder and nothing else, so the script
+rem it wants to run isn't there. Say so rather than letting Python complain about
+rem a path nobody recognises.
+if not exist "%~dp0install_mod.py" goto notextracted
+
 set "PYEXE="
 set "PYARGS="
 
@@ -70,6 +76,25 @@ echo.
 echo Install Python from https://www.python.org/downloads/
 echo Tick "Add python.exe to PATH" on the first screen of the installer.
 echo Then run Install.bat again.
+echo.
+pause
+exit /b 1
+
+:notextracted
+echo.
+echo I can't find install_mod.py, which should be sat right next to this file.
+echo.
+echo This nearly always means you double-clicked Install.bat from inside the
+echo zip or rar without unpacking it first. Your archive program copies just
+echo the one file out to a temp folder and runs it there, on its own, so the
+echo rest of the mod isn't with it.
+echo.
+echo Right click the download, Extract All (or Extract Here in WinRAR), pick a
+echo normal folder like your Desktop, and run Install.bat out of the folder it
+echo makes. It should have install_mod.py and a mod folder in it.
+echo.
+echo I'm running from:
+echo   %~dp0
 echo.
 pause
 exit /b 1
