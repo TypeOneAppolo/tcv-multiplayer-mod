@@ -535,6 +535,80 @@ def apply_mod(work: Path) -> None:
     say("mod", "registered the Net autoload and export preset")
 
 
+def powershell(script: str, timeout: int = 30) -> str:
+    exe = shutil.which("powershell") or shutil.which("pwsh")
+    if not exe:
+        return ""
+    try:
+        proc = subprocess.run([exe, "-NoProfile", "-NonInteractive", "-Command", script],
+                              capture_output=True, text=True, errors="replace",
+                              timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.strip()
+
+
+def defender_detections(output: Path) -> list[str]:
+    """Recent Defender detections that name our build. Empty if it isn't Defender."""
+    raw = powershell(
+        "Get-MpThreatDetection -ErrorAction SilentlyContinue | "
+        "Sort-Object InitialDetectionTime | Select-Object -Last 12 | ForEach-Object { "
+        "\"$($_.InitialDetectionTime)  $($_.ThreatName)  $($_.Resources -join ' ')\" }")
+    stem = output.stem.lower()
+    return [line.strip() for line in raw.splitlines() if stem in line.lower()]
+
+
+def realtime_protection_on() -> bool:
+    answer = powershell("(Get-MpComputerStatus -ErrorAction SilentlyContinue)"
+                        ".RealTimeProtectionEnabled")
+    return answer.strip().lower() == "true"
+
+
+def recover_leftover_build(output: Path, work: Path) -> bool:
+    """Godot builds to <name>.tmp and renames it at the very end. If that rename
+    lost a race, the whole build is sitting right there under the wrong name."""
+    for stray in (output.with_suffix(".tmp"), work / (output.stem + ".tmp")):
+        if stray.is_file() and stray.stat().st_size > 1048576:
+            stray.replace(output)
+            say("build", f"the exporter left the build as {stray.name}; renamed it")
+            return True
+    return False
+
+
+def explain_missing_export(proc: subprocess.CompletedProcess, output: Path) -> None:
+    tail = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()
+    interesting = [line for line in tail
+                   if "ERROR" in line or "error" in line or "Failed" in line]
+    if interesting:
+        print("\nGodot said:")
+        for line in interesting[-8:]:
+            print(f"  {line}")
+
+    print(f"\nGodot finished without complaining, but {output.name} is not there.")
+
+    hits = defender_detections(output)
+    if hits:
+        print("\nWindows Defender deleted it. Its own log says so:")
+        for line in hits[-3:]:
+            print(f"  {line}")
+    elif realtime_protection_on():
+        print("\nAlmost always this is antivirus. A freshly built, unsigned Godot game")
+        print("looks exactly like the thing malware scanners are trained to catch, and")
+        print("Defender quarantines it the moment the file is renamed to .exe.")
+    else:
+        print("\nUsually this is antivirus quarantining the new .exe the instant it")
+        print("appears. Check whatever scanner you run for a blocked item.")
+
+    folder = output.resolve().parent
+    print("\nTo let it through, open PowerShell as administrator and run:")
+    print(f'  Add-MpPreference -ExclusionPath "{folder}"')
+    print("\nIf Defender already took a copy, release it too:")
+    print("  Start-Process ms-settings:windowsdefender")
+    print("  (Virus & threat protection -> Protection history -> Allow)")
+    print("\nThe exclusion only covers that one folder, and you can drop it again")
+    print(f'afterwards with Remove-MpPreference -ExclusionPath "{folder}".')
+
+
 def export(godot: Path, work: Path, output: Path) -> None:
     say("build", "importing project assets (this takes a minute)")
     probe = subprocess.run([str(godot), "--headless", "--path", str(work), "--import"],
@@ -544,12 +618,20 @@ def export(godot: Path, work: Path, output: Path) -> None:
             "importing the project")
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    say("build", f"exporting to {output}")
-    run([str(godot), "--headless", "--path", str(work),
-         "--export-release", EXPORT_PRESET, str(output.resolve())],
-        "exporting the game")
-    if not output.is_file():
-        raise Failed("the export reported success but produced no file")
+    while True:
+        say("build", f"exporting to {output}")
+        proc = run([str(godot), "--headless", "--path", str(work),
+                    "--export-release", EXPORT_PRESET, str(output.resolve())],
+                   "exporting the game")
+        if output.is_file() or recover_leftover_build(output, work):
+            return
+        explain_missing_export(proc, output)
+        if not sys.stdin.isatty():
+            raise Failed("the export produced no file -- see the notes above")
+        print()
+        if input("Press Enter to build again once that's done, or type q to give up: "
+                 ).strip().lower().startswith("q"):
+            raise Failed("the export produced no file -- see the notes above")
 
 
 def main(argv: list[str]) -> int:
