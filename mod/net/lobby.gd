@@ -31,6 +31,9 @@ func _ready() -> void:
 	Net.player_list_changed.connect(_refresh, CONNECT_DEFERRED)
 	Net.connection_failed.connect(_on_error, CONNECT_DEFERRED)
 	Net.connected_to_lobby.connect(_on_connected, CONNECT_DEFERRED)
+	# a joiner turned away is the host's problem to hear about: the person it
+	# happened to is looking at their own screen, not this one.
+	Net.host_notice.connect(_on_host_notice, CONNECT_DEFERRED)
 	Net.server_disconnected.connect(func() -> void: _on_error(
 		"Lost the connection to the host. Either they closed the lobby, or the link between you dropped."))
 	_refresh()
@@ -202,17 +205,25 @@ func _on_connected() -> void:
 	_refresh()
 
 
-# the handshake can succeed and the lobby still never arrive, which is what
-# people were hitting: an empty contestant list, a dead Ready box, and a silent
-# disconnect half a minute later.
+# the status line rather than the warning line: _refresh() rewrites the warning
+# every time the roster moves, and a joiner being turned away moves it.
+func _on_host_notice(text: String) -> void:
+	_set_status(text)
+
+
+# nothing has answered on the socket at all. Net handles the other case itself
+# now -- reached them, they never answered the handshake -- and says so, because
+# that one is a build difference rather than anything to do with the network.
+# This used to cover both and blamed the network for both, which had people
+# reopening ports that were fine.
 func _watch_the_join() -> void:
 	await get_tree().create_timer(JOIN_TIMEOUT).timeout
 	if not is_inside_tree(): return
 	if Net.is_host() or not Net.is_online() or Net.slot_count() > 0: return
-	_set_status(("The host hasn't sent the lobby after %d seconds.\n"
+	_set_status(("No answer from %s after %d seconds.\n"
 		+ "Check they are hosting on port %s, and that the address you typed is the one "
 		+ "their end shows. On Hamachi that is the IPv4 address next to their name.") % [
-		int(JOIN_TIMEOUT), port_field.text])
+		address_field.text, int(JOIN_TIMEOUT), port_field.text])
 
 
 func _on_leave() -> void:

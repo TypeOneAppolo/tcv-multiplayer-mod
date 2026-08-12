@@ -5,19 +5,29 @@ signal player_list_changed
 signal connection_failed(reason: String)
 signal connected_to_lobby
 signal server_disconnected
+# something the host needs telling that happened to somebody else, eg a joiner
+# turned away. the person it concerns is not the one looking at this screen.
+signal host_notice(text: String)
 signal match_should_start(clip_paths: PackedStringArray)
 signal performance_received(slot: int)
 signal scores_received(scores: PackedInt32Array)
 
 const PORT: int = 7654
 const MAX_PLAYERS: int = 4
+# 5: the join handshake moved off _rpc_register onto _HANDSHAKE, see the long
+# note above it. builds on 4 and below cannot be negotiated with at all, which
+# is the entire reason it had to move.
 # 4: pack hashes cover the contents of a pack and not the folder name, so the
 # manifest from an older build would compare against nothing and read as a
 # missing pack. better to say so than to let it look broken.
-const PROTOCOL_VERSION: int = 4
+const PROTOCOL_VERSION: int = 5
 const CHUNK_SIZE: int = 24576
 const PERFORMANCE_TIMEOUT: float = 60.0
 const BARRIER_TIMEOUT: float = 90.0
+# how long either end waits on the join handshake before saying so. the work
+# behind it is a dictionary and two rpcs, so anything approaching this is not
+# slowness, it is a peer that cannot be talked to.
+const HANDSHAKE_TIMEOUT: float = 10.0
 
 # ENet drops a peer that stops acking for 30s by default. Loading a match scene
 # blocks whichever machine is doing it -- the studio model, the contestant packs
@@ -106,6 +116,10 @@ func host_game(player_name: String, pack: String, port: int = PORT) -> Error:
 
 
 func join_game(address: String, player_name: String, pack: String, port: int = PORT) -> Error:
+	# before the socket, not after. this walks every voice pack on the disk, and
+	# once we are connected the only place left to do it is inside the multiplayer
+	# poll, where it stalls the handshake it is holding up.
+	voice_pack_manifest()
 	var peer: = ENetMultiplayerPeer.new()
 	var err: Error = peer.create_client(address, port)
 	if err != OK:
@@ -113,6 +127,8 @@ func join_game(address: String, player_name: String, pack: String, port: int = P
 		return err
 	multiplayer.multiplayer_peer = peer
 	mode = MODE.CLIENT
+	_join_generation += 1
+	_handshake_answered = false
 	log_net("dialling %s:%d" % [address, port])
 	_wire_signals()
 	players.clear()
@@ -130,6 +146,8 @@ func leave() -> void:
 	manifests.clear()
 	slot_map = []
 	_manifest_cache.clear()
+	_pending_handshakes.clear()
+	_handshake_answered = false
 	_reset_session_state()
 	player_list_changed.emit()
 
@@ -170,6 +188,16 @@ func end_session() -> void:
 var _pending_name: String = ""
 var _pending_pack: String = ""
 
+# host: peers that have connected but not handshook yet. client: whether the
+# host has answered ours at all, which is a different question from whether the
+# roster has turned up and is the one worth telling people about.
+var _pending_handshakes: Dictionary = {}
+var _handshake_answered: bool = false
+# bumped every time we dial out. the watchdog below sleeps for ten seconds, and
+# without a stamp one left over from an attempt the user has already given up on
+# comes back and closes the connection they made on the second go.
+var _join_generation: int = 0
+
 
 func _make_record(player_name: String, pack: String) -> Dictionary:
 	return {"name": player_name, "pack": pack, "ready": false}
@@ -195,10 +223,14 @@ func _relax_timeout(id: int) -> void:
 func _on_peer_connected(id: int) -> void:
 	log_net("peer %d connected" % id)
 	_relax_timeout(id)
+	if is_host():
+		_pending_handshakes[id] = true
+		_watch_for_handshake(id)
 
 
 func _on_peer_disconnected(id: int) -> void:
 	log_net("peer %d disconnected" % id)
+	_pending_handshakes.erase(id)
 	if is_host():
 		players.erase(id)
 		manifests.erase(id)
@@ -216,8 +248,18 @@ func _on_peer_disconnected(id: int) -> void:
 
 func _on_connected_to_server() -> void:
 	log_net("connected to host, registering as '%s'" % _pending_name)
-	_rpc_register.rpc_id(1, PROTOCOL_VERSION, _pending_name, _pending_pack, voice_pack_manifest())
+	_handshake_answered = false
+	# the manifest was worked out in join_game. walking packs_voice from in here
+	# would stall the poll this is being called from, and on a big library that
+	# alone can outlast the host's patience for us.
+	_HANDSHAKE.rpc_id(1, {
+		"version": PROTOCOL_VERSION,
+		"name": _pending_name,
+		"pack": _pending_pack,
+		"manifest": voice_pack_manifest(),
+	})
 	connected_to_lobby.emit()
+	_watch_for_answer(_join_generation)
 
 
 func _on_connection_failed() -> void:
@@ -233,6 +275,8 @@ func _on_server_disconnected() -> void:
 	manifests.clear()
 	slot_map = []
 	_manifest_cache.clear()
+	_pending_handshakes.clear()
+	_handshake_answered = false
 	_reset_session_state()
 	server_disconnected.emit()
 	if get_tree().get_root().has_node("World"): M.world.CreateMenu()
@@ -240,27 +284,138 @@ func _on_server_disconnected() -> void:
 
 
 
+### the join handshake. READ THIS BEFORE ADDING AN RPC. ########################
+#
+# Godot never puts method names on the wire. It sorts a script's @rpc methods by
+# name and sends the index, so _rpc_roster is "call 16" and nothing else. Add,
+# rename or remove one @rpc anywhere in this file and every method after it
+# alphabetically shifts a place -- while a peer on the old build carries on
+# sending the old numbers. Their "register me" lands on whatever now sits at that
+# index, the argument count doesn't match, Godot drops the call, and the host
+# never finds out anybody knocked.
+#
+# That is exactly what the version check was meant to catch, and exactly why it
+# never did: the check lived inside _rpc_register, which is the one call that
+# cannot survive a version difference. v1.1.3 inserted _rpc_manifests, which
+# sorts tenth and pushed _rpc_register from call 14 to call 15, so a v1.1.2
+# joiner's registration arrived at a v1.1.3 host as _rpc_perf_end and went in the
+# bin. Both ends sat there politely. The joiner was told "the host hasn't sent
+# the lobby", and everyone went off checking ports and firewalls that were fine,
+# because the real answer -- one of you is on the old build -- was the one thing
+# the mod had made itself unable to say.
+#
+# So the handshake is pinned to the front of that sorted list. _HANDSHAKE and
+# _HANDSHAKE_REPLY sort ahead of _rpc_anything ('H' < 'r'), which makes them call
+# 0 and call 1 in this build and in every future build that keeps the _rpc_
+# prefix on everything else. They take one Dictionary each, so new fields go
+# inside the payload and the argument count never moves either. Whatever else
+# changes, two peers can always get far enough to tell each other what they are
+# running.
+#
+# Keep every other @rpc in this file named _rpc_*. _ready() checks and shouts.
+
+
 @rpc("any_peer", "call_remote", "reliable")
-func _rpc_register(version: int, player_name: String, pack: String, manifest: Dictionary) -> void:
+func _HANDSHAKE(payload: Dictionary) -> void:
 	if not is_host(): return
 	var sender: int = multiplayer.get_remote_sender_id()
-	if version != PROTOCOL_VERSION:
-		_rpc_kick.rpc_id(sender, "Different mod version. Everyone needs the same build.")
+	_pending_handshakes.erase(sender)
+
+	var their_version: int = int(payload.get("version", 0))
+	if their_version != PROTOCOL_VERSION:
+		var which: String = "a newer" if their_version > PROTOCOL_VERSION else "an older"
+		var told_them: String = ("Different build of the mod. You are on protocol %d, the host "
+			+ "is on %d. Whoever is behind runs the installer again, off the same download.") % [
+			their_version, PROTOCOL_VERSION]
+		var told_us: String = ("Turned a joiner away: they are on %s build of the mod "
+			+ "(protocol %d, yours is %d). You both need to install off the same download.") % [
+			which, their_version, PROTOCOL_VERSION]
+		_refuse(sender, told_them, told_us)
 		return
 	if players.size() >= MAX_PLAYERS:
-		_rpc_kick.rpc_id(sender, "Lobby is full (%d players max)." % MAX_PLAYERS)
+		_refuse(sender, "Lobby is full (%d players max)." % MAX_PLAYERS,
+			"Someone tried to join a full lobby.")
 		return
+
+	var player_name: String = str(payload.get("name", "Player"))
 	log_net("'%s' joined (peer %d)" % [player_name, sender])
-	players[sender] = _make_record(player_name, pack)
-	manifests[sender] = manifest
+	players[sender] = _make_record(player_name, str(payload.get("pack", "")))
+	manifests[sender] = _as_dictionary(payload.get("manifest", {}))
+	_HANDSHAKE_REPLY.rpc_id(sender, {"ok": true})
 	_rebuild_slots()
 	_push_roster()
 	_push_manifests()
 
 
 @rpc("authority", "call_remote", "reliable")
-func _rpc_kick(reason: String) -> void:
+func _HANDSHAKE_REPLY(payload: Dictionary) -> void:
+	_handshake_answered = true
+	if bool(payload.get("ok", false)): return
+	var reason: String = str(payload.get("reason", "The host turned the join down."))
+	log_net("host refused the join: %s" % reason)
 	connection_failed.emit(reason)
+	leave()
+
+
+# tell them why, tell the host why, then close it -- but not in the same breath.
+# ENet hands the refusal and the disconnect over together, and a client that gets
+# both at once acts on the disconnect and throws the packet queue away with the
+# reason still sitting unread in it. You then get "lost the connection to the
+# host", which is the same shrug this whole fix exists to stop handing people.
+# Anyone who can read the refusal leaves on their own well inside the grace;
+# closing it afterwards is only for those who can't.
+const REFUSAL_GRACE: float = 2.0
+
+
+func _refuse(peer_id: int, reason: String, notice: String) -> void:
+	log_net("refused peer %d: %s" % [peer_id, reason])
+	_HANDSHAKE_REPLY.rpc_id(peer_id, {"ok": false, "reason": reason})
+	host_notice.emit(notice)
+	_drop_peer_once_that_has_landed(peer_id)
+
+
+func _drop_peer_once_that_has_landed(peer_id: int) -> void:
+	await get_tree().create_timer(REFUSAL_GRACE).timeout
+	_drop_peer(peer_id)
+
+
+func _drop_peer(peer_id: int) -> void:
+	if not is_online(): return
+	# they may well have taken themselves off already, and asking ENet to
+	# disconnect somebody it has never heard of is an error in its own right.
+	if not multiplayer.get_peers().has(peer_id): return
+	var enet: = multiplayer.multiplayer_peer as ENetMultiplayerPeer
+	if enet == null: return
+	enet.disconnect_peer(peer_id)
+
+
+# a peer that opened a socket and then said nothing this build understands. an
+# old copy of the mod calling an rpc that has since moved looks precisely like
+# this, and it is far and away the usual cause, so say so rather than leaving the
+# host wondering why the list never filled in.
+func _watch_for_handshake(id: int) -> void:
+	await get_tree().create_timer(HANDSHAKE_TIMEOUT).timeout
+	if not is_host() or not _pending_handshakes.has(id): return
+	_pending_handshakes.erase(id)
+	log_net("peer %d connected but never handshook, dropping it" % id)
+	host_notice.emit("Someone reached you but never got through the join handshake. "
+		+ "That is nearly always an older build of the mod -- they need to run the "
+		+ "installer again off the same download as you.")
+	_drop_peer(id)
+
+
+# the other side of it: we got a socket open and the host has said nothing back.
+# the lobby's own timer only ever knew that no lobby had turned up, which reads
+# as a network problem and usually isn't one.
+func _watch_for_answer(generation: int) -> void:
+	await get_tree().create_timer(HANDSHAKE_TIMEOUT).timeout
+	if generation != _join_generation: return
+	if is_host() or not is_online() or _handshake_answered: return
+	log_net("host never answered the handshake")
+	connection_failed.emit(("Reached the host, but they never answered the join.\n"
+		+ "You are almost certainly on different builds of the mod: an older one cannot "
+		+ "even be told that it is old. Both of you run the installer again off the same "
+		+ "download, then try again."))
 	leave()
 
 
@@ -281,6 +436,7 @@ func _push_roster() -> void:
 
 @rpc("authority", "call_remote", "reliable")
 func _rpc_roster(new_players: Dictionary, new_slots: PackedInt32Array) -> void:
+	_handshake_answered = true
 	players = new_players
 	slot_map = new_slots
 	player_list_changed.emit()
@@ -942,6 +1098,25 @@ func _ready() -> void:
 	# there is what stranded joiners on the lobby screen while the host played on.
 	match_should_start.connect(_on_match_should_start, CONNECT_DEFERRED)
 	dub_should_start.connect(_on_dub_should_start, CONNECT_DEFERRED)
+	if OS.is_debug_build(): _check_the_handshake_still_sorts_first()
+
+
+# the handshake only survives a version difference because it sorts to the front
+# of the rpc list, and nothing in the language enforces that. an rpc named, say,
+# _abort_round would quietly take call 0 off it and put us straight back to
+# joiners hanging with no idea why. catch it here rather than in someone's lobby.
+func _check_the_handshake_still_sorts_first() -> void:
+	var names: Array[String] = []
+	for m: Dictionary in get_method_list():
+		var n: String = str(m.get("name", ""))
+		if n.begins_with("_HANDSHAKE") or n.begins_with("_rpc_"):
+			if not names.has(n): names.append(n)
+	names.sort()
+	if names.size() < 2: return
+	if names[0] == "_HANDSHAKE" and names[1] == "_HANDSHAKE_REPLY": return
+	push_error(("net: '%s' now sorts ahead of the handshake, so its rpc numbers have moved. "
+		+ "Every rpc other than the handshake pair must be named _rpc_*, or two builds "
+		+ "stop being able to tell each other what they are.") % names[0])
 
 
 func _on_match_should_start(clip_paths: PackedStringArray) -> void:

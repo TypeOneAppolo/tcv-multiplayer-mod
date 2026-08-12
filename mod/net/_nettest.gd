@@ -15,9 +15,27 @@ var EXPECTED_OWNERS: PackedInt32Array = PackedInt32Array([0, 1, 0, 0, 1])
 func _ready() -> void:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
 	if args.is_empty(): return
+	_check_handshake_ordering()
 	match args[0]:
 		"host": _run_host()
 		"client": _run_client()
+
+
+# the one invariant everything else rests on. Godot addresses an rpc by its index
+# in the name sorted list of them, so the handshake only survives a version
+# difference while it holds calls 0 and 1. Break this and two builds go back to
+# staring at each other, which is the bug this test exists downstream of.
+func _check_handshake_ordering() -> void:
+	var names: Array[String] = []
+	for m: Dictionary in Net.get_method_list():
+		var n: String = str(m.get("name", ""))
+		if n.begins_with("_HANDSHAKE") or n.begins_with("_rpc_"):
+			if not names.has(n): names.append(n)
+	names.sort()
+	if names.size() > 1 and names[0] == "_HANDSHAKE" and names[1] == "_HANDSHAKE_REPLY":
+		print("NETTEST PASS | handshake still holds calls 0 and 1")
+	else:
+		print("NETTEST FAIL | handshake is no longer first, rpc order starts %s" % str(names.slice(0, 3)))
 
 
 func _fake_take() -> AudioStreamWAV:

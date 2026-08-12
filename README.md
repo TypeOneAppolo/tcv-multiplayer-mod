@@ -279,14 +279,43 @@ folder.
 **Somebody got kicked for a different mod version.** They're on an older build of
 the mod. Everyone runs the installer again off the same version of this repo.
 
+**"The host hasn't sent the lobby after 12 seconds."** You're on different builds
+of the mod, and up to v1.1.3 that was the message you got for it no matter what.
+Everyone rebuilds off the same download, all of you, at the same time. Updating
+one person doesn't help and is usually what causes it.
+
+The version check was supposed to catch this and say so. It couldn't. Godot
+doesn't send the name of a network call, it sorts them by name and sends the
+position, so call fifteen means whatever happens to be fifteenth in that build.
+v1.1.3 added one call that sorted tenth and pushed everything below it down a
+place, so a v1.1.2 joiner's "let me in" arrived as a completely different call
+with the wrong number of arguments and got dropped on the floor. The check that
+would have caught the version difference was inside the message that never
+arrived. The host genuinely never heard anyone knock, so it sat there, and the
+joiner sat there being told the host hadn't sent the lobby.
+
+Fixed in v1.1.4, and the fix is mostly about never doing this again: the join
+handshake is now pinned to the front of that sorted list where nothing can shift
+it, and it carries its arguments in one bag so their number can't change either.
+Two builds can now always get as far as telling each other what they're running,
+whatever else moves between versions. If they differ you get told which of you is
+behind, on both screens. A v1.1.4 host also gives up on a joiner that never
+completes the handshake and says so on the host's own screen, which is the only
+thing that can help when the other end is too old to be told anything.
+
+v1.1.4 still can't talk to v1.1.3 or earlier, and there's no fixing that from
+this end. It just fails with the right message now instead of the wrong one.
+
 **The joiner sees an empty lobby, no host name, a dead Ready box, and gets
 dropped after about half a minute.** That was a bug, fixed. The lobby used to
 send everyone the full file listing of every voice pack they owned, which ran to
 hundreds of kilobytes, and over a VPN link it never finished arriving. ENet gives
 up on a peer after exactly 30 seconds of that, which is where the timing came
 from. It now sends a clip count and a checksum per pack instead, a couple of
-kilobytes. Everyone needs to run the installer again to pick this up, and older
-builds get kicked for a version mismatch rather than doing this quietly.
+kilobytes. Everyone needs to run the installer again to pick this up. That last
+part isn't optional: older builds were meant to get kicked with a message saying
+so, and it turned out they couldn't be told anything at all. See "the host hasn't
+sent the lobby" below.
 
 **The host presses start and goes into the match, but the joiner sits on the
 online match screen and gets dropped about half a minute later.** That was a bug,
@@ -358,6 +387,11 @@ send one performance per turn, and stop everyone drifting apart between phases.
 - The host works out who dubs which clip once and sends the whole list when the
   dub starts. Everyone could work it out themselves from the same picks, but then
   a late change would quietly give two people different answers for one clip.
+- The join handshake sits at the front of the sorted list of network calls and
+  takes one dictionary, so its number and its shape both stay put no matter what
+  else gets added later. Godot addresses calls by position in that list, so
+  anything else would mean two builds losing the ability to tell each other what
+  they are, which is the one conversation that has to work when they differ.
 - Voice packs are compared by a clip count and a checksum per pack. Sending the
   file names was hundreds of kilobytes on a normal install, and a reliable packet
   that can't get across costs you the peer 30 seconds later. The pack summaries
