@@ -12,14 +12,19 @@ signal match_should_start(clip_paths: PackedStringArray)
 signal performance_received(slot: int)
 signal scores_received(scores: PackedInt32Array)
 
-# shown in the lobby and the log, so two people can compare builds.
-const MOD_VERSION: String = "1.1.5"
+# shown in the lobby and the log, so two people can compare builds. bump it for
+# anything that goes out, even when the protocol below does not move: two builds
+# that behave differently and both call themselves 1.1.5 make the one question
+# worth asking -- "what does yours say?" -- impossible to answer.
+const MOD_VERSION: String = "1.1.6"
 
 const PORT: int = 7654
 const MAX_PLAYERS: int = 4
 # 5: the join handshake moved off _rpc_register onto _HANDSHAKE, see the long
 # note above it. builds on 4 and below cannot be negotiated with at all, which
-# is the entire reason it had to move.
+# is the entire reason it had to move. 1.1.6 stays on 5 deliberately: it adds a
+# key to the handshake payload and no @rpc at all, so the sorted call list is
+# identical to 1.1.4's and 1.1.5's and all three still play together.
 # 4: pack hashes cover the contents of a pack and not the folder name, so the
 # manifest from an older build would compare against nothing and read as a
 # missing pack. better to say so than to let it look broken.
@@ -254,19 +259,42 @@ func _on_peer_connected(id: int) -> void:
 
 func _on_peer_disconnected(id: int) -> void:
 	log_net("peer %d disconnected" % id)
+	# a peer that opened a socket and left again without ever registering. the
+	# watchdog below was meant to be the one that says so, but it only ever got
+	# the chance when the host's clock ran out first: both ends wait the same ten
+	# seconds from the same moment, and a joiner that gives up takes the socket
+	# with it, which lands here and erases the entry the watchdog was waiting on.
+	# So roughly half the time the host was left watching somebody blink in and
+	# out with no explanation whatsoever -- which is the exact shrug this pair of
+	# timers exists to stop handing people. Say it here too.
+	var never_handshook: bool = is_host() and _pending_handshakes.has(id)
 	_pending_handshakes.erase(id)
+	if never_handshook:
+		log_net("peer %d left without ever handshaking" % id)
+		host_notice.emit("Someone reached you and left again without getting through the "
+			+ "join handshake. That is nearly always an older build of the mod -- and an "
+			+ "older one cannot even be told that it is old, so it gives up rather than "
+			+ "saying anything. You both need to install off the same download. "
+			+ _this_build())
 	if is_host():
+		# somebody who never made it into the roster cannot have changed it, and
+		# everything below is about a seat coming free. This used to run for any
+		# disconnect at all, so a peer that merely knocked -- an old build being
+		# turned away, and they retry -- cleared the whole dub casting on its way
+		# past, every attempt, while four people were sat there picking.
+		var was_seated: bool = players.has(id)
 		players.erase(id)
 		manifests.erase(id)
-		_rebuild_slots()
-		# roles are keyed by slot and the slots below the leaver just shifted
-		# up, so keeping them would hand someone else's characters over.
-		if not dub_roles.is_empty():
-			dub_roles.clear()
-			log_net("cleared the dub casting, someone left while it was being picked")
-			_push_dub_roles()
-		_push_roster()
-		_push_manifests()
+		if was_seated:
+			_rebuild_slots()
+			# roles are keyed by slot and the slots below the leaver just shifted
+			# up, so keeping them would hand someone else's characters over.
+			if not dub_roles.is_empty():
+				dub_roles.clear()
+				log_net("cleared the dub casting, someone left while it was being picked")
+				_push_dub_roles()
+			_push_roster()
+			_push_manifests()
 	player_list_changed.emit()
 
 
@@ -276,8 +304,12 @@ func _on_connected_to_server() -> void:
 	# the manifest was worked out in join_game. walking packs_voice from in here
 	# would stall the poll this is being called from, and on a big library that
 	# alone can outlast the host's patience for us.
+	# "mod" is only ever quoted back at people in a message. new keys are free --
+	# the payload is one Dictionary and always will be, see the note by _HANDSHAKE
+	# -- and a build too old to send it is told apart by its absence.
 	_HANDSHAKE.rpc_id(1, {
 		"version": PROTOCOL_VERSION,
+		"mod": MOD_VERSION,
 		"name": _pending_name,
 		"pack": _pending_pack,
 		"manifest": voice_pack_manifest(),
@@ -348,12 +380,13 @@ func _HANDSHAKE(payload: Dictionary) -> void:
 	var their_version: int = int(payload.get("version", 0))
 	if their_version != PROTOCOL_VERSION:
 		var which: String = "a newer" if their_version > PROTOCOL_VERSION else "an older"
-		var told_them: String = ("Different build of the mod. You are on protocol %d, the host "
-			+ "is on %d. Whoever is behind runs the installer again, off the same download.") % [
-			their_version, PROTOCOL_VERSION]
-		var told_us: String = ("Turned a joiner away: they are on %s build of the mod "
-			+ "(protocol %d, yours is %d). You both need to install off the same download.") % [
-			which, their_version, PROTOCOL_VERSION]
+		var theirs: String = _describe_build(str(payload.get("mod", "")), their_version)
+		var told_them: String = ("Different build of the mod. You are on %s, the host is on "
+			+ "%s. Whoever is behind runs the installer again, off the same download.") % [
+			theirs, _this_build()]
+		var told_us: String = ("Turned a joiner away: they are on %s build of the mod (%s), "
+			+ "you are on %s. You both need to install off the same download.") % [
+			which, theirs, _this_build()]
 		_refuse(sender, told_them, told_us)
 		return
 	if players.size() >= MAX_PLAYERS:
@@ -424,8 +457,23 @@ func _watch_for_handshake(id: int) -> void:
 	log_net("peer %d connected but never handshook, dropping it" % id)
 	host_notice.emit("Someone reached you but never got through the join handshake. "
 		+ "That is nearly always an older build of the mod -- they need to run the "
-		+ "installer again off the same download as you.")
+		+ "installer again off the same download as you. " + _this_build())
 	_drop_peer(id)
+
+
+# every message about a build difference carries this. the message is the thing
+# that gets screenshotted and pasted at me, and "one of you is on the wrong
+# build" is no use to anybody unless it also says which build said it.
+func _this_build() -> String:
+	return "You are on mod %s, protocol %d." % [MOD_VERSION, PROTOCOL_VERSION]
+
+
+# what to call the other end's build. anything old enough not to send its version
+# number is pinned down by that absence alone, which is worth saying rather than
+# printing an empty pair of quotes.
+func _describe_build(mod: String, protocol: int) -> String:
+	if mod.is_empty(): return "protocol %d, too old to say which build it is" % protocol
+	return "mod %s, protocol %d" % [mod, protocol]
 
 
 # the other side of it: we got a socket open and the host has said nothing back.
@@ -439,7 +487,8 @@ func _watch_for_answer(generation: int) -> void:
 	connection_failed.emit(("Reached the host, but they never answered the join.\n"
 		+ "You are almost certainly on different builds of the mod: an older one cannot "
 		+ "even be told that it is old. Both of you run the installer again off the same "
-		+ "download, then try again."))
+		+ "download, then try again.\n" + _this_build() + " Ask the host what theirs says "
+		+ "at the top of their lobby."))
 	leave()
 
 
