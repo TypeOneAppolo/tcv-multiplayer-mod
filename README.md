@@ -67,7 +67,8 @@ installing it and getting a game going:
    install python first if you haven't got it.
 4. Copy the host's voice packs to everyone else (see
    [setting up a game](#setting-up-a-game)).
-5. Launch the new exe, press **F9**, host or join.
+5. Launch the new exe and click **ONLINE** in the top right of the main menu
+   (or press **F9**), then host or join.
 
 ## you need to own the game
 
@@ -157,8 +158,10 @@ name, not their real one. 2 to 4 players.
 
 ## playing
 
-1. Launch the modded exe and hit **F9** on the main menu, that opens the online
-   lobby. (F9 is a bit of a bodge, there's no proper menu button yet.)
+1. Launch the modded exe. There's an **ONLINE** button in the top right of the
+   main menu, that opens the online lobby. **F9** does the same thing. If you
+   can't see the button, you're running your original exe and not the modded
+   one.
 2. Host hits **Host**. Everyone else types the host's IP in and hits **Join**.
 3. Once everyone's showing in the list, host hits **Start (choose clips)** for the
    normal game show, or **Start (dub mode)**, picks a pack, and everyone gets
@@ -265,12 +268,32 @@ minute the second time. Take the exclusion off afterwards with
 Defender already quarantined a copy, release it under Virus & threat protection
 → Protection history.
 
-**F9 does nothing.** You have to be on the main menu, and it has to be the modded
-exe, not your original one.
+**F9 does nothing.** Look for the **ONLINE** button in the top right of the main
+menu and click that instead. If the button isn't there, you're on your original
+exe rather than the modded one — check which file you actually launched, and
+check your shortcut isn't still pointing at the old one.
 
-**Nobody can join me.** Port 7654 UDP needs forwarding to your pc, and the game
-needs allowing through your firewall. Try one of the LAN tools above first, it's
-much less hassle and it proves whether the rest of it works.
+If the button *is* there but F9 isn't doing anything, it's your keyboard, not the
+mod. On a lot of laptops the top row is media keys unless you hold **Fn**, and
+OBS, Medal and GeForce Experience all like to grab F9 for start/stop recording.
+The button doesn't care about any of that.
+
+**My recording plays back silent, but the waveform drew fine.** Open Settings →
+Microphone and re-pick your mic from the dropdown, even if it already looks like
+the right one. The game remembers the mic by name, and if that device has been
+unplugged or renamed since you chose it the saved name goes stale — re-picking it
+writes a live one back. Fixed in 1.1.5 so the mod checks the name before it uses
+it, but re-picking is still worth doing if you're on an older build.
+
+**Nobody can join me.** First check they're typing the right address. When you
+hit **Host** the lobby now lists every address this machine has and marks the one
+to hand out — if Hamachi or Radmin is running, it's that one, and it is *not* the
+IP a what-is-my-ip page shows you. Most failed joins are people forwarding ports
+that were never the problem.
+
+If you're not using a LAN tool, port 7654 UDP needs forwarding to your pc and the
+game needs allowing through your firewall. Try one of the LAN tools above first,
+it's much less hassle and it proves whether the rest of it works.
 
 **Match won't start, says clips are missing.** Someone hasn't got the voice packs
 the host picked. Copy `packs_voice` over again and make sure it went to the right
@@ -448,7 +471,8 @@ against a clean decompile with the node path fix applied.
 
 ## rough edges
 
-- Lobby's on F9, not a menu button.
+- The lobby button is drawn over the menu by the mod rather than being a real
+  menu entry, so it doesn't match the game's own styling.
 - Windows 0.5.1 and 0.5.2 dev-2. Anything else fails with a clear error when it
   goes to patch it.
 - Everyone needs the same build. The mod checks and kicks you out with a message

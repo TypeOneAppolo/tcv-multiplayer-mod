@@ -12,6 +12,9 @@ signal match_should_start(clip_paths: PackedStringArray)
 signal performance_received(slot: int)
 signal scores_received(scores: PackedInt32Array)
 
+# shown in the lobby and the log, so two people can compare builds.
+const MOD_VERSION: String = "1.1.5"
+
 const PORT: int = 7654
 const MAX_PLAYERS: int = 4
 # 5: the join handshake moved off _rpc_register onto _HANDSHAKE, see the long
@@ -113,6 +116,27 @@ func host_game(player_name: String, pack: String, port: int = PORT) -> Error:
 	_rebuild_slots()
 	player_list_changed.emit()
 	return OK
+
+
+# every address a joiner might be asked to type, with the one that works marked.
+# on Hamachi or Radmin it is theirs, never the public IP people go and look up.
+func addresses_to_give_out() -> String:
+	var lines: PackedStringArray = []
+	for address: String in IP.get_local_addresses():
+		# IPv4 only here, and link-local means the adapter never got a lease.
+		if address.contains(":"): continue
+		if address.begins_with("127.") or address.begins_with("169.254."): continue
+		lines.append("    %s%s" % [address, _address_hint(address)])
+	if lines.is_empty(): return "    (no network address found on this machine)"
+	return "\n".join(lines)
+
+
+func _address_hint(address: String) -> String:
+	if address.begins_with("25."): return "   <- Hamachi. Use this one."
+	if address.begins_with("26."): return "   <- Radmin VPN. Use this one."
+	if address.begins_with("192.168.") or address.begins_with("10."):
+		return "   (only works for someone on your own wifi)"
+	return ""
 
 
 func join_game(address: String, player_name: String, pack: String, port: int = PORT) -> Error:
@@ -625,6 +649,54 @@ func _rpc_start_match(sid: int, clip_paths: PackedStringArray) -> void:
 
 
 
+### the microphone #############################################################
+
+# Profile.audio_device_in keeps the name of a mic that has since been unplugged:
+# the profile setter falls back to "Default" but leaves the dead name behind. The
+# game assigns it straight back, unchecked, every turn. Offline that is one
+# person who still owns the mic they picked; online it is everyone. Check it the
+# way the game's own device dropdown does.
+func use_configured_microphone() -> void:
+	var wanted: String = Profile.audio_device_in
+	if not AudioServer.get_input_device_list().has(wanted):
+		log_net("microphone '%s' is not on this machine, falling back to Default" % wanted)
+		wanted = "Default"
+	if AudioServer.input_device == wanted: return
+	AudioServer.input_device = wanted
+	log_net("microphone set to '%s'" % wanted)
+
+
+const PLMIC_RECORD_EFFECT_INDEX: int = 7
+
+
+func _raw_plmic_recording() -> AudioStreamWAV:
+	var bus: int = AudioServer.get_bus_index("Plmic")
+	if bus < 0: return null
+	var effect: AudioEffectRecord = AudioServer.get_bus_effect(
+		bus, PLMIC_RECORD_EFFECT_INDEX) as AudioEffectRecord
+	if effect == null: return null
+	return effect.get_recording()
+
+
+# the game crops 0.4s off the front of every take by byte count, and slice() past
+# the end returns nothing -- so a short capture comes out empty rather than short.
+# The waveform is sampled off the spectrum analyser and still draws fine, which is
+# the report we keep getting. Keep the uncropped take instead of sending nothing.
+func vetted_take(take: AudioStreamWAV) -> AudioStreamWAV:
+	if take != null and take.data.size() > 0:
+		log_net("take: %d bytes, %d Hz, %s" % [take.data.size(), take.mix_rate,
+			"stereo" if take.stereo else "mono"])
+		return take
+	log_net("TAKE IS EMPTY -- the crop consumed the whole recording, so capture came "
+		+ "up shorter than 0.4s. Check the mic selected in Settings is the one plugged in.")
+	var raw: AudioStreamWAV = _raw_plmic_recording()
+	if raw != null and raw.data.size() > 0:
+		log_net("recovered the uncropped take, %d bytes at %d Hz" % [raw.data.size(), raw.mix_rate])
+		return raw
+	log_net("nothing was captured at all this turn")
+	return take
+
+
 func clear_round_performances() -> void:
 	_perf_inbox.clear()
 	_perf_staging.clear()
@@ -1092,12 +1164,97 @@ func rebuild_clip_set(paths: PackedStringArray) -> PackedStringArray:
 	return missing
 
 
+### the way in #################################################################
+#
+# F9 alone was never enough. The function row on a lot of laptops is media keys
+# unless you hold Fn, OBS and Medal both want F9 for recording, and some people
+# were pressing it on the stock exe. None of that gets better by reading the key
+# more carefully, so there is a button on screen now. F9 still works.
+
+const ENTRY_INSET: Vector2 = Vector2(24, 20)
+
+var _entry_layer: CanvasLayer
+var _entry_button: Button
+
+
+func _build_the_way_in() -> void:
+	_entry_layer = CanvasLayer.new()
+	# clear of the game's overlays, which sit on z_index 1 of the default layer.
+	_entry_layer.layer = 128
+	add_child(_entry_layer)
+
+	_entry_button = Button.new()
+	_entry_button.text = "ONLINE  (F9)"
+	_entry_button.tooltip_text = "Open the multiplayer lobby.\nMultiplayer mod %s, protocol %d." % [
+		MOD_VERSION, PROTOCOL_VERSION]
+	# the menus run on ui_accept, and a button holding focus eats the first press.
+	_entry_button.focus_mode = Control.FOCUS_NONE
+	_entry_button.pressed.connect(open_lobby)
+	_entry_layer.add_child(_entry_button)
+
+	# polled: there is no hook into the game's screen changes, and they all go
+	# through primary_capsule anyway.
+	var ticker: = Timer.new()
+	ticker.wait_time = 0.4
+	ticker.timeout.connect(_place_entry_button)
+	add_child(ticker)
+	ticker.start()
+	_place_entry_button()
+
+
+func _place_entry_button() -> void:
+	if not is_instance_valid(_entry_button): return
+	_entry_button.visible = can_open_lobby()
+	if not _entry_button.visible: return
+	_entry_button.size = _entry_button.get_combined_minimum_size()
+	var view: Vector2 = _entry_layer.get_viewport().get_visible_rect().size
+	_entry_button.position = Vector2(
+		view.x - _entry_button.size.x - ENTRY_INSET.x, ENTRY_INSET.y)
+
+
+# menus only. CreateLobby frees everything under primary_capsule, so F9 mid-show
+# tears the show down for you and then for everyone waiting on your barrier. Also
+# stops a second press stacking another lobby on the first.
+func can_open_lobby() -> bool:
+	if not get_tree().get_root().has_node("World"): return false
+	var world: Node = M.world
+	# mid-transition. The button sits above the blackout, so hide it.
+	var blackout: CanvasItem = world.blackout
+	if is_instance_valid(blackout) and blackout.visible: return false
+	var capsule: Node = world.primary_capsule
+	if capsule == null: return false
+	for child: Node in capsule.get_children():
+		if child.scene_file_path.contains("menu_master"): return true
+	return false
+
+
+func open_lobby() -> void:
+	if not can_open_lobby(): return
+	log_net("opening the lobby")
+	M.world.CreateLobby()
+
+
+# on Net rather than world.gd: this is in the tree from startup, and _input runs
+# ahead of the focused control that used to swallow the key.
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey): return
+	var key: InputEventKey = event
+	if not key.pressed or key.echo: return
+	# physical_keycode too, keycode goes through the keyboard layout.
+	if key.keycode != KEY_F9 and key.physical_keycode != KEY_F9: return
+	if not can_open_lobby(): return
+	get_viewport().set_input_as_handled()
+	open_lobby()
+
+
 func _ready() -> void:
 	# CONNECT_DEFERRED for the same reason the lobby uses it: these fire from
 	# inside the multiplayer poll. Loading a pack and swapping the scene from in
 	# there is what stranded joiners on the lobby screen while the host played on.
 	match_should_start.connect(_on_match_should_start, CONNECT_DEFERRED)
 	dub_should_start.connect(_on_dub_should_start, CONNECT_DEFERRED)
+	log_net("multiplayer mod %s (protocol %d) loaded" % [MOD_VERSION, PROTOCOL_VERSION])
+	_build_the_way_in()
 	if OS.is_debug_build(): _check_the_handshake_still_sorts_first()
 
 

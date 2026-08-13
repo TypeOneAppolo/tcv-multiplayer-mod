@@ -63,6 +63,14 @@ func _build_ui() -> void:
 	title.add_theme_font_size_override("font_size", 32)
 	column.add_child(title)
 
+	# "check you are on the same version" is no use if the version is nowhere.
+	var build: = Label.new()
+	build.text = "Multiplayer mod %s, protocol %d. Everyone has to be on the same protocol number." % [
+		Net.MOD_VERSION, Net.PROTOCOL_VERSION]
+	build.add_theme_font_size_override("font_size", 14)
+	build.add_theme_color_override("font_color", Color(0.65, 0.65, 0.75))
+	column.add_child(build)
+
 	var default_name: String = OS.get_environment("USERNAME")
 	if default_name.is_empty(): default_name = "Player"
 	name_field = _labeled_field(column, "Your name", default_name)
@@ -189,7 +197,9 @@ func _labeled_field(parent: Control, label_text: String, default_value: String) 
 func _on_host() -> void:
 	var err: Error = Net.host_game(name_field.text, Profile.contestant, int(port_field.text))
 	if err == OK:
-		_set_status("Hosting on port %s. Share your IP with your friends." % port_field.text)
+		# spell them out. "share your IP" is where most failed joins start.
+		_set_status("Hosting on port %s. Your friends type one of these as the host address:\n%s" % [
+			port_field.text, Net.addresses_to_give_out()])
 
 
 func _on_join() -> void:

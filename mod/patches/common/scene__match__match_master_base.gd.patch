@@ -46,8 +46,9 @@
  		tween = contestant_view_overlay.create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
  
 -		if sp:
+-			if AudioServer.input_device != Profile.audio_device_in: AudioServer.input_device = Profile.audio_device_in
 +		if sp or Net.is_online():
- 			if AudioServer.input_device != Profile.audio_device_in: AudioServer.input_device = Profile.audio_device_in
++			Net.use_configured_microphone()
  		else:
  			if AudioServer.input_device != c.audio_input_device: AudioServer.input_device = c.audio_input_device
 @@ -253,10 +261,37 @@
@@ -74,6 +75,7 @@
 +	var networked_contestant_turn = func(i: int):
 +		if Net.is_my_slot(i):
 +			await individual_contestant_turn.call(i)
++			conte_slots[i].stream_player.stream = Net.vetted_take(conte_slots[i].stream_player.stream)
 +			await Net.submit_performance(i, conte_slots[i].round_plmic_data, conte_slots[i].stream_player.stream)
 +		else:
 +			await remote_contestant_turn.call(i)
