@@ -225,6 +225,10 @@ person too.
 
 ## troubleshooting
 
+If nothing here covers it, send me the logs rather than a description. **Where
+are the logs**, at the bottom of this section, says which folder and where to
+put it.
+
 **"can't open file ... install_mod.py: [Errno 2] No such file or directory"**,
 and the path it names has something like `Rar$DIa1234.5678.rartemp` or
 `Temp\7zO8B...` in it. You ran `Install.bat` from inside the zip or rar without
@@ -329,6 +333,12 @@ thing that can help when the other end is too old to be told anything.
 v1.1.4 still can't talk to v1.1.3 or earlier, and there's no fixing that from
 this end. It just fails with the right message now instead of the wrong one.
 
+v1.1.6 closes the last hole in that, on the host's screen. Both ends waited the
+same ten seconds, so whoever gave up first took the connection down and the
+other's explanation never fired -- and about half the time that was the host,
+who saw somebody appear and vanish with nothing said. Now they get told either
+way, and every one of these messages names the build it came from.
+
 **The joiner sees an empty lobby, no host name, a dead Ready box, and gets
 dropped after about half a minute.** That was a bug, fixed. The lobby used to
 send everyone the full file listing of every voice pack they owned, which ran to
@@ -371,9 +381,19 @@ never performed.
 **Someone crashed or alt f4'd mid match.** Everyone else carries on after about a
 minute. It won't hang forever waiting for them.
 
-**Where are the logs.** `%APPDATA%\YeahMaybe\ChoicerVoicer\logs\`. Grab
-`choicervoicer.log` off everyone involved if you're reporting something, the
-network stuff all gets logged with `[NET]` in front of it.
+**Where are the logs.** `%APPDATA%\YeahMaybe\ChoicerVoicer\logs\`. Paste that
+into the address bar of any Explorer window and it'll take you straight there.
+
+**Something's wrong and none of the above covers it.** Send me the logs. Zip that
+whole logs folder — the *host's* and the *joiner's*, from the same attempt, both
+of them — and put it on a
+[GitHub issue](https://github.com/TypeOneAppolo/tcv-multiplayer-mod/issues) or
+the [GameBanana page](https://gamebanana.com/mods/702231). Everything the mod
+does is in there with `[NET]` in front of it, and one pair of logs is usually
+enough to say exactly what went wrong. A description on its own almost never is:
+"we couldn't join" looks identical from the outside whether it's a firewall, a
+mistyped address, or the two of you being on different builds, and the logs tell
+those apart in seconds.
 
 ## why you cant just drop files in
 
@@ -465,6 +485,19 @@ godot --headless --path project -- client
 `_nettest.gd` covers the bug that used to make the game unplayable after one
 pack. It runs a second show reusing the same contestant slot and barrier tags and
 checks the new take turns up instead of the old one.
+
+`devtest/old_peer/` is a project of its own, and needs no copy of the game. It
+connects to a host, says nothing at all, and leaves — which is exactly what a
+build too old to speak the handshake looks like from the host's side. Open a
+lobby, host, then point it at yourself:
+
+```
+godot --headless --path devtest/old_peer -- 127.0.0.1 7654 3
+```
+
+The last number is how long it hangs around. Under 10 seconds it leaves before
+the host's watchdog and over 10 it outstays it; the host should say the same
+thing either way, and nobody should ever appear in the contestant list.
 
 If you edit a game script and want to regenerate the patches, diff your project
 against a clean decompile with the node path fix applied.
