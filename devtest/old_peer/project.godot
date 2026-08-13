@@ -1,0 +1,14 @@
+; Dev tool, deliberately outside mod/ so install_mod.py never copies it into a
+; build. See main.gd for what it is and how to run it.
+
+config_version=5
+
+[application]
+
+config/name="old peer"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.4")
+
+[debug]
+
+settings/stdout/verbose_stdout=true
