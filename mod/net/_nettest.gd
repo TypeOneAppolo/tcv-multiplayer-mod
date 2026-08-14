@@ -95,6 +95,21 @@ func _run_host() -> void:
 	else: print("NETTEST FAIL | host resolved %s, wanted %s" % [str(owners), str(EXPECTED_OWNERS)])
 	Net.broadcast_dub_begin(owners)
 
+	# the watch. pressing it must not start anything until everyone is sat on
+	# their results screen -- the client below takes its time getting there on
+	# purpose, the way a slow machine does while it scores the clips.
+	var watched: Array = []
+	Net.dub_watch.connect(func(playing: bool) -> void: watched.append(playing))
+	Net.report_dub_finished()
+	Net.request_dub_watch(true)
+	await get_tree().create_timer(1.5).timeout
+	if watched.is_empty(): print("NETTEST PASS | host held the watch back, someone was still scoring")
+	else: print("NETTEST FAIL | host started the watch on its own: %s" % str(watched))
+
+	await get_tree().create_timer(3.5).timeout
+	if watched == [true]: print("NETTEST PASS | the watch went out once everyone was ready")
+	else: print("NETTEST FAIL | host watch signals were %s, wanted [true]" % str(watched))
+
 	await get_tree().create_timer(2.0).timeout
 	print("NETTEST | HOST DONE")
 	get_tree().quit()
@@ -139,6 +154,17 @@ func _run_client() -> void:
 	print("NETTEST | client roles=%s owners=%s" % [str(Net.dub_roles), str(Net.dub_clip_owners)])
 	if Net.dub_clip_owners == EXPECTED_OWNERS: print("NETTEST PASS | client agrees on the cast")
 	else: print("NETTEST FAIL | client got %s, wanted %s" % [str(Net.dub_clip_owners), str(EXPECTED_OWNERS)])
+
+	var watched: Array = []
+	Net.dub_watch.connect(func(playing: bool) -> void: watched.append(playing))
+	# slow off the mark on purpose. the host presses Watch well before this.
+	await get_tree().create_timer(3.0).timeout
+	if not watched.is_empty(): print("NETTEST FAIL | client was watching before it said it was ready")
+	Net.report_dub_finished()
+
+	await get_tree().create_timer(2.5).timeout
+	if watched == [true]: print("NETTEST PASS | client was told to watch")
+	else: print("NETTEST FAIL | client watch signals were %s, wanted [true]" % str(watched))
 
 	print("NETTEST | CLIENT DONE")
 	get_tree().quit()

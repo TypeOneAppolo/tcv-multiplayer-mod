@@ -16,19 +16,23 @@ signal scores_received(scores: PackedInt32Array)
 # anything that goes out, even when the protocol below does not move: two builds
 # that behave differently and both call themselves 1.1.5 make the one question
 # worth asking -- "what does yours say?" -- impossible to answer.
-const MOD_VERSION: String = "1.1.6"
+const MOD_VERSION: String = "1.1.7"
 
 const PORT: int = 7654
 const MAX_PLAYERS: int = 4
+# 6: the dub watch goes through the host now, which took two new @rpc methods.
+# Both are named _rpc_* so the handshake still sorts first and a 1.1.6 joiner is
+# told what is wrong rather than hanging -- but every call index after them has
+# moved, so 5 and 6 genuinely cannot play together.
 # 5: the join handshake moved off _rpc_register onto _HANDSHAKE, see the long
 # note above it. builds on 4 and below cannot be negotiated with at all, which
-# is the entire reason it had to move. 1.1.6 stays on 5 deliberately: it adds a
-# key to the handshake payload and no @rpc at all, so the sorted call list is
-# identical to 1.1.4's and 1.1.5's and all three still play together.
+# is the entire reason it had to move. 1.1.6 stayed on 5 deliberately: it added a
+# key to the handshake payload and no @rpc at all, so the sorted call list was
+# identical to 1.1.4's and 1.1.5's and all three still played together.
 # 4: pack hashes cover the contents of a pack and not the folder name, so the
 # manifest from an older build would compare against nothing and read as a
 # missing pack. better to say so than to let it look broken.
-const PROTOCOL_VERSION: int = 5
+const PROTOCOL_VERSION: int = 6
 const CHUNK_SIZE: int = 24576
 const PERFORMANCE_TIMEOUT: float = 60.0
 const BARRIER_TIMEOUT: float = 90.0
@@ -191,6 +195,10 @@ func _reset_session_state() -> void:
 	_barrier_released.clear()
 	_end_round_queue.clear()
 	_dub_begin_pending = false
+	_dub_finished.clear()
+	_pending_dub_watch = 0
+	_dub_watch_pending = false
+	_dub_watch_cancelled = false
 	dub_roles.clear()
 	dub_clip_owners = PackedInt32Array()
 	_scores_inbox = PackedInt32Array()
@@ -1022,13 +1030,141 @@ func take_pending_dub_begin() -> bool:
 	return pending
 
 
-func broadcast_dub_watch(playing: bool) -> void:
-	if is_online(): _rpc_dub_watch.rpc(session_id, playing)
+### watching the finished dub together #########################################
+#
+# Everyone reaches the last clip within a frame of each other -- the whole dub
+# runs in lockstep, nobody moves on until the take for the clip in front of them
+# has landed. What is not in lockstep is what happens next: dub_finished() scores
+# every clip on a background thread and spins a wheel for a second on top, and
+# that takes as long as the machine takes. So the host's Watch button lit up,
+# the host pressed it, and the joiners were still staring at a spinning wheel --
+# and worse, the results screen they were still building painted straight over
+# the video that had just started underneath it.
+#
+# So the press no longer starts anything by itself. It asks the host, the host
+# waits until every peer has said it is sat on its results screen, and only then
+# does one broadcast start all of them. Anyone can press it; it means the same
+# thing whoever does.
+
+# peer -> true, host side only. cleared with the rest of the session.
+var _dub_finished: Dictionary = {}
+# a watch that arrived before this end was ready for it. applied on arrival at
+# the results screen, so a peer that was still scoring does not miss it.
+var _pending_dub_watch: int = 0
+# one wait at a time, or a second press starts a second one.
+var _dub_watch_pending: bool = false
+# a Stop pressed while that wait is still running. without it the wait finishes
+# afterwards and starts a video everyone has already been told not to play.
+var _dub_watch_cancelled: bool = false
+
+# long enough for the slowest machine anyone has reported, short enough that a
+# peer which has quietly wedged does not hold the whole room hostage.
+const DUB_WATCH_TIMEOUT: float = 30.0
+
+
+# "I am on the results screen." everyone calls this, host included.
+func report_dub_finished() -> void:
+	if not is_online(): return
+	if is_host(): _dub_finished[1] = true
+	else: _rpc_dub_finished.rpc_id(1, session_id)
+
 
 @rpc("any_peer", "call_remote", "reliable")
+func _rpc_dub_finished(sid: int) -> void:
+	if not is_host(): return
+	if sid != session_id: return
+	_dub_finished[multiplayer.get_remote_sender_id()] = true
+
+
+func everyone_finished_dub() -> bool:
+	if not is_host(): return true
+	for id: int in players:
+		if not _dub_finished.has(id): return false
+	return true
+
+
+func players_still_dubbing() -> PackedStringArray:
+	var out: PackedStringArray = []
+	for slot: int in slot_count():
+		if not _dub_finished.has(peer_for_slot(slot)): out.append(player_name_for_slot(slot))
+	return out
+
+
+# what the Watch and Stop buttons call. offline it is just the local signal.
+func request_dub_watch(playing: bool) -> void:
+	if not is_online():
+		dub_watch.emit(playing)
+		return
+	if is_host(): _host_start_watch(playing)
+	else: _rpc_dub_watch_request.rpc_id(1, session_id, playing)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_dub_watch_request(sid: int, playing: bool) -> void:
+	if not is_host(): return
+	if sid != session_id: return
+	_host_start_watch(playing)
+
+
+func _host_start_watch(playing: bool) -> void:
+	if not is_host(): return
+	# stopping never waits on anybody. whoever is behind gets the stop latched and
+	# applies it the moment they arrive, which is the right thing either way.
+	if not playing:
+		_dub_watch_cancelled = _dub_watch_pending
+		_broadcast_dub_watch(false)
+		return
+	if _dub_watch_pending: return
+	_dub_watch_pending = true
+	_dub_watch_cancelled = false
+	var sid: int = session_id
+	var waited: float = 0.0
+	var told: bool = false
+	while not everyone_finished_dub():
+		if _dub_watch_cancelled or not is_online() or session_id != sid:
+			_dub_watch_pending = false
+			if told: _loading_hint("")
+			return
+		if not told:
+			told = true
+			# said once, not every frame: the hint frees and rebuilds its overlay
+			# on each call, and the names in it barely move anyway.
+			_loading_hint("Waiting for %s to finish scoring..." % ", ".join(players_still_dubbing()))
+		await get_tree().process_frame
+		waited += get_process_delta_time()
+		if waited > DUB_WATCH_TIMEOUT:
+			log_net("starting the watch without %s, they have had %.0fs" % [
+				", ".join(players_still_dubbing()), waited])
+			break
+	_dub_watch_pending = false
+	if told: _loading_hint("")
+	_broadcast_dub_watch(true)
+
+
+# host only, and the host goes through the same signal as everyone else so the
+# two ends cannot drift apart in what they do with it.
+func _broadcast_dub_watch(playing: bool) -> void:
+	if not is_host(): return
+	_rpc_dub_watch.rpc(session_id, playing)
+	dub_watch.emit(playing)
+
+
+@rpc("authority", "call_remote", "reliable")
 func _rpc_dub_watch(sid: int, playing: bool) -> void:
 	if sid != session_id: return
 	dub_watch.emit(playing)
+
+
+# for a peer that got the watch while it was still scoring. -1 stop, 0 nothing,
+# 1 play.
+func latch_dub_watch(playing: bool) -> void:
+	_pending_dub_watch = 1 if playing else -1
+
+
+func take_pending_dub_watch() -> int:
+	var pending: int = _pending_dub_watch
+	_pending_dub_watch = 0
+	return pending
 
 
 

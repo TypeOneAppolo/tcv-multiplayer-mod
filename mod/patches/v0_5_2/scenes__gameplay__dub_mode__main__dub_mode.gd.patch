@@ -1,6 +1,6 @@
 --- a/scenes/gameplay/dub_mode/main/dub_mode.gd
 +++ b/scenes/gameplay/dub_mode/main/dub_mode.gd
-@@ -63,6 +63,47 @@
+@@ -63,6 +63,48 @@
  var resource: GameplayResourceDubMode
  
  
@@ -8,6 +8,8 @@
 +var my_dub_slot: int = 0
 +var dub_player_count: int = 1
 +var character_picker: Control
++# the results screen is up and this end can be told to watch. see _on_remote_watch.
++var net_ready_to_watch: bool = false
 +
 +
 +func _is_my_clip(index: int) -> bool:
@@ -123,6 +125,15 @@
  	clip_index += 1
  	if clip_index >= performance_array.size():
  		_enter_finish()
+@@ -202,6 +288,7 @@
+ func _enter_finish() -> void :
+ 	performing_finished = true
+ 	MicrophoneService.disable()
+ 	btn_hear_again.enable(false);btn_record.enable(false);btn_refresh_mic.enable(false)
+ 	btn_watch.enable(true);btn_save_dub.enable(true)
+-	dub_finished()
++	await dub_finished()
++	_net_finished_dubbing()
 @@ -232,6 +318,12 @@
  	MicrophoneService.disable()
  func _ready() -> void :
@@ -145,29 +156,52 @@
  
  
  
-@@ -320,6 +414,16 @@
+@@ -320,6 +414,33 @@
  
  
  func watch() -> void :
-+	if not Net.is_spectator(): Net.broadcast_dub_watch(true)
-+	_do_watch()
++	# the press no longer starts anything by itself. it asks the host, the host
++	# waits until every peer is sat on its results screen, and one broadcast
++	# starts all of us together. see the long note in net_manager.gd.
++	if not net_dub:
++		_do_watch()
++		return
++	Net.request_dub_watch(true)
 +
 +
 +func _on_remote_watch(playing: bool) -> void :
++	# still building the results screen. dub_finished() would paint straight over
++	# the video, so take this when we get there instead.
++	if not net_ready_to_watch:
++		Net.latch_dub_watch(playing)
++		return
 +	if playing: _do_watch()
 +	else: _do_stop()
++
++
++# the results screen is finally up. say so, and take a watch that landed while
++# this machine was still scoring.
++func _net_finished_dubbing() -> void :
++	if not net_dub: return
++	net_ready_to_watch = true
++	Net.report_dub_finished()
++	var pending: int = Net.take_pending_dub_watch()
++	if pending > 0: _do_watch()
++	elif pending < 0: _do_stop()
 +
 +
 +func _do_watch() -> void :
  	clear_playing_clips()
  	var performance_fusion: Array[OmniClipMemberInstance] = []
  	performance_fusion.append_array(performance_array)
-@@ -347,6 +451,11 @@
+@@ -347,6 +468,11 @@
  
  func clear_playing_clips() -> void : for timer: Timer in replay_streams.get_children(): timer.queue_free()
  func stop() -> void :
-+	if not Net.is_spectator(): Net.broadcast_dub_watch(false)
-+	_do_stop()
++	if not net_dub:
++		_do_stop()
++		return
++	Net.request_dub_watch(false)
 +
 +
 +func _do_stop() -> void :
