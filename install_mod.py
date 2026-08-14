@@ -16,6 +16,7 @@ import ssl
 import subprocess
 import sys
 import urllib.request
+import webbrowser
 import zipfile
 from pathlib import Path
 
@@ -44,7 +45,9 @@ GDRE_URL = ("https://github.com/GDRETools/gdsdecomp/releases/download/"
 TEMPLATE_MEMBER = "templates/windows_release_x86_64.exe"
 
 EXPORT_PRESET = "Windows Desktop"
-DEFAULT_OUTPUT = "TheChoicerVoicer-Multiplayer.exe"
+OUTPUT_STEM = "TheChoicerVoicer-Multiplayer"
+
+DISCORD_URL = "https://discord.gg/HYhh6V4NZk"
 
 NODE_PATH_RE = re.compile(r'(\$%?[A-Za-z_]\w*)((?:\s*/\s*%?[A-Za-z_]\w*)+)')
 
@@ -72,6 +75,26 @@ def read_text(path: Path) -> str:
 def write_text(path: Path, text: str) -> None:
     with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
+
+
+def mod_version() -> str:
+    """The mod's own version, straight off the constant the lobby shows.
+
+    One source of truth on purpose. The number on the exe is the number two
+    people compare when one of them can't join the other, and a name that had to
+    be kept in step by hand would eventually stop being."""
+    try:
+        text = read_text(MOD / "net" / "net_manager.gd")
+    except OSError:
+        return ""
+    match = re.search(r'const\s+MOD_VERSION\s*:\s*String\s*=\s*"([^"]+)"', text)
+    return match.group(1) if match else ""
+
+
+MOD_VERSION = mod_version()
+# the version goes on the end so the file sorts next to its neighbours and so
+# nobody has to open a build to find out which one it is.
+DEFAULT_OUTPUT = f"{OUTPUT_STEM}-{MOD_VERSION}.exe" if MOD_VERSION else f"{OUTPUT_STEM}.exe"
 
 
 def _https_context() -> ssl.SSLContext | None:
@@ -319,7 +342,8 @@ def find_game_exe() -> list[Path]:
         if key in seen or not path.is_file():
             return
         seen.add(key)
-        if path.name.lower() == DEFAULT_OUTPUT.lower():
+        # anything we built ourselves, whichever version is on the end of it.
+        if path.stem.lower().startswith(OUTPUT_STEM.lower()):
             return
         candidates.append(path)
 
@@ -531,8 +555,20 @@ def apply_mod(work: Path) -> None:
     say("mod", f"patched {count} game scripts")
 
     patch_project_godot(work)
-    shutil.copy2(MOD / "export_presets.cfg", work / "export_presets.cfg")
+    write_export_preset(work)
     say("mod", "registered the Net autoload and export preset")
+
+
+def write_export_preset(work: Path) -> None:
+    """The exporter is told where to put the build on the command line, so this
+    path only matters to a modder who opens the project and hits Export. Stamp
+    the version on it there too rather than leaving them the one name that says
+    nothing."""
+    text = read_text(MOD / "export_presets.cfg")
+    if MOD_VERSION:
+        text = text.replace(f'export_path="{OUTPUT_STEM}.exe"',
+                            f'export_path="{DEFAULT_OUTPUT}"', 1)
+    write_text(work / "export_presets.cfg", text)
 
 
 def powershell(script: str, timeout: int = 30) -> str:
@@ -634,6 +670,21 @@ def export(godot: Path, work: Path, output: Path) -> None:
             raise Failed("the export produced no file -- see the notes above")
 
 
+def open_the_discord() -> None:
+    """Nobody plays this on their own, and half of what goes wrong is somebody
+    on the wrong build or the wrong voice packs -- both of which take one message
+    to sort out and an evening to work out alone. The link is printed either way,
+    so a machine with no browser to open loses nothing."""
+    print(f"\nCome say hello, find people to play with, or shout at me when it breaks:")
+    print(f"  {DISCORD_URL}")
+    try:
+        opened = webbrowser.open(DISCORD_URL)
+    except Exception:
+        opened = False
+    if opened:
+        print("  (opening that in your browser now)")
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         description="Build The Choicer Voicer multiplayer mod from your own copy of the game.",
@@ -643,6 +694,8 @@ def main(argv: list[str]) -> int:
                          f"({' or '.join(SUPPORTED_VERSIONS)})")
     ap.add_argument("-o", "--output", default=DEFAULT_OUTPUT,
                     help=f"where to write the modded exe (default: {DEFAULT_OUTPUT})")
+    ap.add_argument("--no-discord", action="store_true",
+                    help="don't open the Discord invite when the build finishes")
     ap.add_argument("--project", metavar="DIR",
                     help="patch an already-decompiled project instead of an exe, "
                          "and stop before exporting (for modders)")
@@ -698,6 +751,9 @@ def main(argv: list[str]) -> int:
     size = output.stat().st_size
     print(f"\nDone -> {output.resolve()}  ({size // 1048576} MB)")
     print("Launch it, press F9 on the main menu to open the online lobby.")
+    print("Everyone you play with needs to build this same version themselves.")
+    if not args.no_discord:
+        open_the_discord()
     return 0
 
 

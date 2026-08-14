@@ -6,7 +6,12 @@ const ROW_HEIGHT: int = 34
 const JOIN_TIMEOUT: float = 12.0
 const KOFI_URL: String = "https://ko-fi.com/appolodev"
 const GAMEBANANA_URL: String = "https://gamebanana.com/mods/702231"
+const DISCORD_URL: String = "https://discord.gg/HYhh6V4NZk"
 const SUPPORT_INSET: Vector2 = Vector2(48, 32)
+# Discord's own. the button is the one thing on this screen someone reaches for
+# when the rest of it isn't working, so let it stand out from the two links next
+# to it that are only ever asking them for something.
+const DISCORD_COLOR: Color = Color("5865f2")
 
 var name_field: LineEdit
 var address_field: LineEdit
@@ -141,7 +146,9 @@ func _build_support_footer() -> void:
 	add_child(support_box)
 
 	var pitch: = Label.new()
-	pitch.text = "This mod is free. If it got your group playing,\nplease support me on Ko-fi, or upvote it on GameBanana."
+	pitch.text = ("Stuck, or short of people to play with? The Discord is where to ask."
+		+ "\nThis mod is free. If it got your group playing, please support me on Ko-fi, "
+		+ "or upvote it on GameBanana.")
 	pitch.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	pitch.add_theme_font_size_override("font_size", 14)
 	pitch.add_theme_color_override("font_color", Color(0.72, 0.72, 0.8))
@@ -152,6 +159,10 @@ func _build_support_footer() -> void:
 	links.add_theme_constant_override("separation", 8)
 	support_box.add_child(links)
 
+	var discord: Button = _link_button("Join the Discord", DISCORD_URL)
+	discord.add_theme_color_override("font_color", DISCORD_COLOR)
+	discord.add_theme_color_override("font_hover_color", DISCORD_COLOR.lightened(0.3))
+	links.add_child(discord)
 	links.add_child(_link_button("Support me on Ko-fi", KOFI_URL))
 	links.add_child(_link_button("Upvote on GameBanana", GAMEBANANA_URL))
 

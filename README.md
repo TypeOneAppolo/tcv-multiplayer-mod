@@ -1,6 +1,10 @@
 # The Choicer Voicer Online Multiplayer
 
 <p align="center">
+  <a href="https://discord.gg/HYhh6V4NZk">
+    <img src="https://img.shields.io/badge/Discord-join%20the%20server-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the Discord" height="40">
+  </a>
+  &nbsp;
   <a href="https://ko-fi.com/appolodev">
     <img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="Buy me a coffee on Ko-fi" height="40">
   </a>
@@ -8,6 +12,11 @@
   <a href="https://ko-fi.com/appolodev/goal?g=0">
     <img src="https://img.shields.io/badge/Ko--fi-see%20the%20goal-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" alt="Ko-fi goal" height="40">
   </a>
+</p>
+
+<p align="center">
+  <em>Stuck on the install, or short of people to play with?
+  <a href="https://discord.gg/HYhh6V4NZk">The Discord</a> is the place to ask.</em>
 </p>
 
 <p align="center">
@@ -101,8 +110,18 @@ doesn't do that any more. See
 
 It downloads about 140mb of tools ([gdRE](https://github.com/GDRETools/gdsdecomp)
 and [Godot](https://godotengine.org), both free), builds the mod, and leaves
-`TheChoicerVoicer-Multiplayer.exe` sat in the same folder. Takes a few minutes.
-Run it again later and it reuses the downloads so it's quicker the second time.
+`TheChoicerVoicer-Multiplayer-1.1.7.exe` sat in the same folder. Takes a few
+minutes. Run it again later and it reuses the downloads so it's quicker the
+second time.
+
+The version is on the end of the name on purpose. Everyone in a lobby has to be
+on the same build, so when a join goes wrong the first question is always "which
+one are you running" — and now the answer is on the exe you launched rather than
+buried in a menu. Old builds are left alone, so you can keep one around to play
+with somebody who hasn't updated yet.
+
+When it finishes it opens the Discord invite in your browser. `--no-discord`
+turns that off.
 
 Your saves and packs don't get touched. The modded exe reads the same
 `%APPDATA%\YeahMaybe\ChoicerVoicer` folder as the normal one, so just keep both
@@ -123,6 +142,7 @@ python install_mod.py "C:\path\to\TheChoicerVoicer_0-5-1 stable.exe"
 | Flag | What it does |
 | --- | --- |
 | `-o PATH` | where to put the modded exe |
+| `--no-discord` | don't open the Discord invite when the build finishes |
 | `--godot PATH` | use a Godot 4.4.1 you've already got |
 | `--gdre PATH` | use a `gdre_tools.exe` you've already got |
 | `--keep-work` | keep the decompiled project instead of binning it |
@@ -187,6 +207,13 @@ The host drives everything. They click through the dialogue, the replays and the
 end of round menu for the whole table so nobody ends up out of step. When it's
 your turn to perform your mic opens on your machine and only yours. Everyone else
 just watches and hears your take once it's uploaded.
+
+Once the last clip is done everyone lands on the results screen, and **Watch**
+plays the finished dub for the whole table at once. Whoever presses it starts it
+for everybody — but not instantly. Scoring the clips takes as long as the slowest
+machine takes, so the press waits until everyone is actually sat there before it
+starts anything, and the person who pressed it gets a "waiting for so-and-so"
+note while it does. **Stop** goes out to everyone the same way.
 
 When the pack's finished you all get put back in the lobby and the host can pick
 another one. No need to restart anything.
@@ -339,6 +366,11 @@ other's explanation never fired -- and about half the time that was the host,
 who saw somebody appear and vanish with nothing said. Now they get told either
 way, and every one of these messages names the build it came from.
 
+v1.1.7 is on protocol 6 and cannot play with v1.1.6 or earlier. Syncing the dub
+watch needed two new calls, which moves every call number after them. It fails
+with the right message on both screens, but everybody does have to rebuild.
+The version is on the exe name now, which is there to make that argument shorter.
+
 **The joiner sees an empty lobby, no host name, a dead Ready box, and gets
 dropped after about half a minute.** That was a bug, fixed. The lobby used to
 send everyone the full file listing of every voice pack they owned, which ran to
@@ -430,6 +462,14 @@ send one performance per turn, and stop everyone drifting apart between phases.
 - The host works out who dubs which clip once and sends the whole list when the
   dub starts. Everyone could work it out themselves from the same picks, but then
   a late change would quietly give two people different answers for one clip.
+- Watching the finished dub is a request to the host, not a local action. The dub
+  itself runs in lockstep so everyone reaches the last clip together, but the
+  results screen behind it scores every clip on a thread and takes as long as the
+  machine takes. Pressing Watch used to start the presser's video a second or
+  more ahead of everyone else's, and on the ones still building that screen it
+  then got painted straight over. Now every peer says when it's ready, the host
+  holds the press until they all have, and one broadcast starts the lot. A watch
+  that still lands early is kept and applied on arrival rather than dropped.
 - The join handshake sits at the front of the sorted list of network calls and
   takes one dictionary, so its number and its shape both stay put no matter what
   else gets added later. Godot addresses calls by position in that list, so
