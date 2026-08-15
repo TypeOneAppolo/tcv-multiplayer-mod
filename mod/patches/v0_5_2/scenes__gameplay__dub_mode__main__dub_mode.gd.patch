@@ -82,7 +82,17 @@
 +	lbl_caption.modulate.a = 1.0
 +	lbl_caption.text = "%s is dubbing this clip..." % who
 +
++	# a take is about a megabyte and the link between two people is whatever it
++	# is, so say it is on its way rather than leaving one line up until it lands.
++	# A caption that never changed is what "he was on clip 5 and I was still on
++	# clip 1" looked like from this end.
++	var show_progress: Callable = func(s: int, got: int, total: int) -> void :
++		if s != index or total <= 0: return
++		lbl_caption.text = "Getting %s's take... %d%%" % [
++			who, mini(100, int(100.0 * float(got) / float(total)))]
++	Net.performance_recv_progress.connect(show_progress)
 +	var perf: Dictionary = await Net.await_performance(index, _owner_slot_of_clip(index))
++	Net.performance_recv_progress.disconnect(show_progress)
 +	if perf.is_empty():
 +		lbl_caption.text = "%s never sent a take -- skipping." % who
 +	else:
@@ -102,6 +112,17 @@
 +func _broadcast_my_take(index: int, mi: OmniClipMemberInstance) -> void :
 +	if not net_dub: return
 +	if not mi.member_audio is AudioStreamWAV: return
++	# this waits for the take to actually reach everybody now rather than just
++	# handing it to ENet and walking off, which is what kept the two ends
++	# together -- and what stopped ENet being buried in audio it could not shift
++	# and dropping the peer over it. It can take a moment, so show it happening.
++	var previously: String = lbl_caption.text
++	var show_progress: Callable = func(s: int, sent: int, total: int) -> void :
++		if s != index or total <= 0: return
++		lbl_caption.modulate.a = 1.0
++		lbl_caption.text = "Sending your take to the others... %d%%" % mini(
++			100, int(100.0 * float(sent) / float(total)))
++	Net.performance_send_progress.connect(show_progress)
 +	await Net.submit_performance(index, {
 +		"va": mi.data_vclip_average,
 +		"vm": mi.data_vclip_maximum,
@@ -110,9 +131,8 @@
 +		"pm": mi.data_plmic_maximum,
 +		"pp": mi.data_plmic_pitches,
 +	}, mi.member_audio)
- func _hear_again() -> void :
- 	if !audio_interface_manager.idled.is_connected(_end_again): audio_interface_manager.idled.connect(_end_again)
- 	audio_interface_manager.again()
++	Net.performance_send_progress.disconnect(show_progress)
++	lbl_caption.text = previously
 @@ -180,6 +261,11 @@
  	this_member_instance.write_vclip_data_from_aggregate(audio_interface_manager.spectrum_aggregate_vclip)
  	this_member_instance.write_plmic_data_from_aggregate(audio_interface_manager.spectrum_aggregate_plmic)
@@ -213,7 +233,6 @@
  	AudioServer.set_bus_mute(VolumeService.BUS_VCLIP, false)
  	AudioServer.set_bus_mute(VolumeService.BUS_PLAYBACK, false)
 -	M.SaveData();M.world.return_to_dub_selection()
--
 +	M.SaveData()
 +	if not net_dub or not Net.is_online():
 +		M.world.return_to_dub_selection()

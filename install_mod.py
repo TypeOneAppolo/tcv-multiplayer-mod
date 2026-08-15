@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import re
 import shutil
 import ssl
 import subprocess
 import sys
+import time
+import traceback
 import urllib.request
 import webbrowser
 import zipfile
@@ -30,6 +33,8 @@ KNOWN_GAME_SIZES = {
     211382192: "0.5.1 compatibility build",
     211382048: "0.5.1 build",
     199462432: "0.5.2 dev-2 compatibility build",
+    208463056: "0.5.2 compatibility build",
+    208462000: "0.5.2 standard build",
 }
 
 GODOT_VERSION = "4.4.1-stable"
@@ -48,6 +53,9 @@ EXPORT_PRESET = "Windows Desktop"
 OUTPUT_STEM = "TheChoicerVoicer-Multiplayer"
 
 DISCORD_URL = "https://discord.gg/HYhh6V4NZk"
+ISSUES_URL = "https://github.com/TypeOneAppolo/tcv-multiplayer-mod/issues"
+
+RUN_LOG_DIR = HERE / "install_logs"
 
 NODE_PATH_RE = re.compile(r'(\$%?[A-Za-z_]\w*)((?:\s*/\s*%?[A-Za-z_]\w*)+)')
 
@@ -238,11 +246,158 @@ def unzip(archive: Path, dest: Path) -> None:
 
 def run(cmd: list[str], what: str) -> subprocess.CompletedProcess:
     proc = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    log_subprocess(what, cmd, proc)
     if proc.returncode != 0:
         tail = (proc.stdout or "") + (proc.stderr or "")
         raise Failed(f"{what} failed (exit {proc.returncode})\n"
                      + "\n".join(tail.strip().splitlines()[-25:]))
     return proc
+
+
+# --- debug logging & diagnostics ------------------------------------------
+#
+# Every run gets its own timestamped log with the full output of every
+# external tool it called, not just the tail printed on screen when
+# something goes wrong. On failure -- expected or not -- that log gets
+# bundled with the game's own logs into a zip a user can drag straight onto
+# a GitHub issue. "It didn't work" turns into a report someone can act on
+# without a back-and-forth to ask what actually happened.
+
+CURRENT_RUN_LOG: Path | None = None
+_LOG_FH = None
+
+
+class _Tee:
+    """Mirrors writes to several streams at once, e.g. the real console and a
+    log file, so nothing printed during a run is only ever seen once."""
+
+    def __init__(self, *streams) -> None:
+        self.streams = streams
+
+    def write(self, data: str) -> int:
+        for stream in self.streams:
+            try:
+                stream.write(data)
+            except Exception:
+                pass
+        return len(data)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            try:
+                stream.flush()
+            except Exception:
+                pass
+
+    def isatty(self) -> bool:
+        return bool(self.streams) and self.streams[0].isatty()
+
+
+def game_log_dir() -> Path | None:
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return None
+    path = Path(appdata) / "YeahMaybe" / "ChoicerVoicer" / "logs"
+    return path if path.is_dir() else None
+
+
+def start_run_log() -> None:
+    """Best-effort: a machine where this can't be set up still gets to run
+    the installer, it just won't have a log to show for it afterwards."""
+    global CURRENT_RUN_LOG, _LOG_FH
+    try:
+        RUN_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        path = RUN_LOG_DIR / f"install-{stamp}.log"
+        fh = open(path, "w", encoding="utf-8", errors="replace")
+        fh.write("The Choicer Voicer multiplayer mod installer -- log started "
+                  f"{stamp}\n")
+        fh.write(f"mod version:  {MOD_VERSION or '(unknown)'}\n")
+        fh.write(f"python:       {sys.version.split()[0]}\n")
+        fh.write(f"platform:     {platform.platform()}\n")
+        fh.write(f"command line: {' '.join(sys.argv)}\n")
+        fh.write("-" * 70 + "\n\n")
+        fh.flush()
+    except OSError:
+        return
+
+    CURRENT_RUN_LOG = path
+    _LOG_FH = fh
+    sys.stdout = _Tee(sys.stdout, fh)
+    sys.stderr = _Tee(sys.stderr, fh)
+
+    for stale in sorted(RUN_LOG_DIR.glob("install-*.log"),
+                        key=lambda p: p.stat().st_mtime, reverse=True)[10:]:
+        try:
+            stale.unlink()
+        except OSError:
+            pass
+
+
+def log_subprocess(what: str, cmd: list[str], proc: subprocess.CompletedProcess) -> None:
+    """The console only ever sees the last few lines of a failed command --
+    the full output of everything run, pass or fail, goes straight to the log
+    file instead of the screen so it's there later without cluttering now."""
+    if not _LOG_FH:
+        return
+    try:
+        _LOG_FH.write(f"\n$ {what}\n  {' '.join(cmd)}\n  exit code: {proc.returncode}\n")
+        if proc.stdout:
+            _LOG_FH.write("  --- stdout ---\n" + proc.stdout)
+            if not proc.stdout.endswith("\n"):
+                _LOG_FH.write("\n")
+        if proc.stderr:
+            _LOG_FH.write("  --- stderr ---\n" + proc.stderr)
+            if not proc.stderr.endswith("\n"):
+                _LOG_FH.write("\n")
+        _LOG_FH.flush()
+    except OSError:
+        pass
+
+
+def zip_diagnostics() -> Path | None:
+    """Bundles this run's log (plus a few recent ones), the game's own logs,
+    and a note on where to send it all into one zip. Returns None if there
+    was nothing worth zipping."""
+    desktop = Path.home() / "Desktop"
+    out_dir = desktop if desktop.is_dir() else HERE
+    zip_path = out_dir / f"tcv-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+
+    added_anything = False
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            if _LOG_FH:
+                try:
+                    _LOG_FH.flush()
+                except OSError:
+                    pass
+            logs = sorted(RUN_LOG_DIR.glob("install-*.log"),
+                          key=lambda p: p.stat().st_mtime, reverse=True)[:5]
+            for log in logs:
+                zf.write(log, f"install_log/{log.name}")
+                added_anything = True
+
+            game_logs = game_log_dir()
+            if game_logs:
+                for f in game_logs.rglob("*"):
+                    if f.is_file():
+                        zf.write(f, f"game_logs/{f.relative_to(game_logs)}")
+                        added_anything = True
+
+            zf.writestr("README.txt",
+                "What's in here\n"
+                "---------------\n"
+                "install_log/  -- what the multiplayer mod installer did and said,\n"
+                "                 most recent run(s) first.\n"
+                "game_logs/    -- the game's own logs, straight from\n"
+                "                 %APPDATA%\\YeahMaybe\\ChoicerVoicer\\logs\\, with\n"
+                "                 [NET] lines showing what the multiplayer mod did.\n"
+                "\n"
+                f"Attach this zip to an issue: {ISSUES_URL}\n")
+    except OSError:
+        return None
+
+    return zip_path if added_anything else None
 
 
 def parse_hunks(patch_text: str) -> list[tuple[int, list[str]]]:
@@ -647,8 +802,10 @@ def explain_missing_export(proc: subprocess.CompletedProcess, output: Path) -> N
 
 def export(godot: Path, work: Path, output: Path) -> None:
     say("build", "importing project assets (this takes a minute)")
-    probe = subprocess.run([str(godot), "--headless", "--path", str(work), "--import"],
-                           capture_output=True, text=True, errors="replace")
+    import_cmd = [str(godot), "--headless", "--path", str(work), "--import"]
+    probe = subprocess.run(import_cmd, capture_output=True, text=True, errors="replace")
+    log_subprocess("checking whether the project needs a one-time editor import",
+                   import_cmd, probe)
     if probe.returncode != 0:
         run([str(godot), "--headless", "--path", str(work), "--editor", "--quit"],
             "importing the project")
@@ -696,6 +853,10 @@ def main(argv: list[str]) -> int:
                     help=f"where to write the modded exe (default: {DEFAULT_OUTPUT})")
     ap.add_argument("--no-discord", action="store_true",
                     help="don't open the Discord invite when the build finishes")
+    ap.add_argument("--zip-logs", action="store_true",
+                    help="bundle this tool's logs and the game's own logs into a zip "
+                         "you can attach to a GitHub issue, then exit -- no game exe "
+                         "needed")
     ap.add_argument("--project", metavar="DIR",
                     help="patch an already-decompiled project instead of an exe, "
                          "and stop before exporting (for modders)")
@@ -710,6 +871,18 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     install_https_opener()
+
+    if args.zip_logs:
+        bundle = zip_diagnostics()
+        if bundle:
+            print(f"Saved a diagnostics zip:\n  {bundle}")
+            print(f"\nAttach it to an issue: {ISSUES_URL}")
+        else:
+            checked = game_log_dir() or (Path(os.environ.get("APPDATA", ""))
+                                         / "YeahMaybe" / "ChoicerVoicer" / "logs")
+            print("Nothing to zip yet -- no installer logs and no game logs found at")
+            print(f"  {checked}")
+        return 0
 
     if not MOD.is_dir():
         raise Failed(f"mod/ folder missing next to {Path(__file__).name}")
@@ -757,12 +930,34 @@ def main(argv: list[str]) -> int:
     return 0
 
 
+def _report_failure() -> None:
+    """A message on its own means someone has to copy-paste the error and
+    then get asked "what were you running it against" anyway. Handing back a
+    ready-made zip skips that whole round trip."""
+    try:
+        bundle = zip_diagnostics()
+    except Exception:
+        bundle = None
+    if bundle:
+        print(f"\nSaved a diagnostics zip you can attach to an issue:\n  {bundle}",
+              file=sys.stderr)
+        print(f"Open one here: {ISSUES_URL}", file=sys.stderr)
+
+
 if __name__ == "__main__":
+    start_run_log()
     try:
         sys.exit(main(sys.argv[1:]))
     except Failed as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)
+        _report_failure()
         sys.exit(1)
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         sys.exit(130)
+    except Exception:
+        print("\nERROR: something went wrong that the installer didn't expect.",
+              file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        _report_failure()
+        sys.exit(1)

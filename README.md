@@ -110,7 +110,7 @@ doesn't do that any more. See
 
 It downloads about 140mb of tools ([gdRE](https://github.com/GDRETools/gdsdecomp)
 and [Godot](https://godotengine.org), both free), builds the mod, and leaves
-`TheChoicerVoicer-Multiplayer-1.1.7.exe` sat in the same folder. Takes a few
+`TheChoicerVoicer-Multiplayer-1.1.8.exe` sat in the same folder. Takes a few
 minutes. Run it again later and it reuses the downloads so it's quicker the
 second time.
 
@@ -147,6 +147,7 @@ python install_mod.py "C:\path\to\TheChoicerVoicer_0-5-1 stable.exe"
 | `--gdre PATH` | use a `gdre_tools.exe` you've already got |
 | `--keep-work` | keep the decompiled project instead of binning it |
 | `--project DIR` | patch a decompiled project and stop, for modders |
+| `--zip-logs` | bundle this tool's logs and the game's own logs into a zip on your Desktop and exit — no game exe needed |
 
 ## setting up a game
 
@@ -236,7 +237,7 @@ or run anything by itself.
 
 If you want to check for yourself:
 
-- The whole thing is 22 text files, about 100kb. Open `Install.bat` and
+- The whole thing is 23 text files, about 200kb. Open `Install.bat` and
   `install_mod.py` in notepad and read them, that's all there is.
 - The installer does download [Godot](https://godotengine.org) and
   [gdRE](https://github.com/GDRETools/gdsdecomp) and run them, because it needs
@@ -252,9 +253,13 @@ person too.
 
 ## troubleshooting
 
-If nothing here covers it, send me the logs rather than a description. **Where
-are the logs**, at the bottom of this section, says which folder and where to
-put it.
+If nothing here covers it, send me the logs rather than a description. Double
+click **`Zip Diagnostics.bat`** and it puts a zip with everything useful --
+the installer's own logs plus the game's -- on your Desktop, ready to attach to
+a [GitHub issue](https://github.com/TypeOneAppolo/tcv-multiplayer-mod/issues).
+If the installer itself fails, it now does this for you automatically and
+tells you where the zip landed. **Where are the logs**, at the bottom of this
+section, has the details for doing it by hand instead.
 
 **"can't open file ... install_mod.py: [Errno 2] No such file or directory"**,
 and the path it names has something like `Rar$DIa1234.5678.rartemp` or
@@ -273,7 +278,8 @@ full path when it asks. It only auto checks itch, downloads and desktop.
 
 **The installer stops with a "hunk does not match" error.** Your game isn't one
 of the versions the patches are written against. It handles Windows 0.5.1 and
-0.5.2 dev-2, and it tells you which one it thinks you gave it.
+0.5.2 (dev-2, standard and compatibility builds), and it tells you which one it
+thinks you gave it.
 
 **Antivirus flags the download.** See [is this a virus](#is-this-a-virus).
 
@@ -371,6 +377,49 @@ watch needed two new calls, which moves every call number after them. It fails
 with the right message on both screens, but everybody does have to rebuild.
 The version is on the exe name now, which is there to make that argument shorter.
 
+v1.1.8 is on protocol 7 and cannot play with v1.1.7 or earlier. Recordings are
+acknowledged as they arrive now, which took another call, and they go over the
+wire compressed, so the audio itself is in a different shape too. Same story:
+right message on both screens, everybody rebuilds.
+
+**We were playing fine and then he just got kicked. No error, no crash, he was
+back at the menu.** That was a bug, fixed in v1.1.8, and it's the same 30 second
+ENet timeout as the two above with a different cause. A recording is about a
+megabyte of raw audio per clip, and the mod used to hand the whole lot to the
+network as fast as the game could loop -- roughly 1.4 MB a second offered,
+whatever the link between you could actually carry. On a LAN that's fine. Over
+Hamachi or Radmin it is nowhere near, and ENet doesn't push back: it queues
+everything it's given, keeps resending what doesn't get through, and after about
+thirty seconds of getting nowhere it declares the peer dead and drops it. Nobody
+gets told anything, because as far as either end is concerned the other one
+simply stopped existing.
+
+The sender now waits to be told the audio is arriving. Every chunk is
+acknowledged and it never gets more than 64KB ahead of the slowest listener, so
+the network is only ever holding an amount any working link can shift. The
+recording is compressed first as well, which is lossless and usually takes a
+third or more off it. Both ends show a percentage while a take is in flight
+instead of a caption that never changes.
+
+Being dropped mid show also puts you back in the **online lobby** with a written
+reason now, rather than the main menu with nothing said.
+
+If it still happens: check Hamachi or Radmin shows a solid green dot next to each
+other's names on both machines. A blue or flashing one means it couldn't connect
+you directly and is relaying you through its own server, which is slow enough
+that this is worth fixing before anything else.
+
+**He was on clip 5 and I was still stuck on clip 1.** Same bug, same fix. Your
+end was waiting on a recording that never arrived, while his end never waited for
+anything and carried straight on. Now the person recording doesn't move to the
+next clip until everyone has the last one, and you can see the take arriving
+while it does.
+
+**Someone takes ages over one clip and gets skipped.** Fixed in v1.1.8. There was
+one flat 60 second limit, and it couldn't tell "they're still recording" apart
+from "the take stopped arriving". Recording now has as long as it takes; a
+transfer that genuinely goes quiet is given 45 seconds and then skipped.
+
 **The joiner sees an empty lobby, no host name, a dead Ready box, and gets
 dropped after about half a minute.** That was a bug, fixed. The lobby used to
 send everyone the full file listing of every voice pack they owned, which ran to
@@ -415,10 +464,17 @@ minute. It won't hang forever waiting for them.
 
 **Where are the logs.** `%APPDATA%\YeahMaybe\ChoicerVoicer\logs\`. Paste that
 into the address bar of any Explorer window and it'll take you straight there.
+Easier: double click **`Zip Diagnostics.bat`** in the mod folder and it grabs
+that whole folder for you, along with the installer's own logs, and puts a zip
+on your Desktop.
 
-**Something's wrong and none of the above covers it.** Send me the logs. Zip that
-whole logs folder — the *host's* and the *joiner's*, from the same attempt, both
-of them — and put it on a
+**Something's wrong and none of the above covers it.** Send me the logs, not a
+description. Double click `Zip Diagnostics.bat` — or run
+`install_mod.py --zip-logs` if you're doing this from a command line — and it
+writes `tcv-diagnostics-<date>-<time>.zip` to your Desktop with the game's
+logs, the installer's own logs, and a note on what's what. Get **both** ends
+of a multiplayer problem this way — the *host's* zip and the *joiner's*, from
+the same attempt — and put them on a
 [GitHub issue](https://github.com/TypeOneAppolo/tcv-multiplayer-mod/issues) or
 the [GameBanana page](https://gamebanana.com/mods/702231). Everything the mod
 does is in there with `[NET]` in front of it, and one pair of logs is usually
@@ -480,6 +536,19 @@ send one performance per turn, and stop everyone drifting apart between phases.
   that can't get across costs you the peer 30 seconds later. The pack summaries
   also travel separately from the roster, which gets resent every time anybody
   ticks Ready.
+- Recordings are compressed, chunked, and acknowledged chunk by chunk, and the
+  sender never gets more than 64KB ahead of the slowest listener. It's the same
+  30 second rule again from the other direction: ENet queues whatever you hand it
+  and gives up on the peer when it can't shift it, so the fix is to stop handing
+  it more than the link can carry. It costs nothing on a LAN, where the
+  acknowledgements come back inside a frame, and it's the difference between
+  working and not over a relayed VPN. A listener that stops acknowledging
+  altogether is dropped from the wait after 45 seconds rather than being allowed
+  to hold the person recording up.
+- Waiting on somebody else's take uses two clocks, not one. Nothing heard yet
+  means they're still recording, which can take as long as they like; a transfer
+  that started and went quiet means the link died, and that gets 45 seconds. One
+  combined limit couldn't tell those apart and skipped people for being slow.
 
 What's in `mod/`:
 
