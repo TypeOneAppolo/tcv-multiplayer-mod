@@ -74,8 +74,9 @@ installing it and getting a game going:
    [troubleshooting](#troubleshooting).
 3. Double click **Install.bat** and wait a few minutes. It'll ask you to
    install python first if you haven't got it.
-4. Copy the host's voice packs to everyone else (see
-   [setting up a game](#setting-up-a-game)).
+4. For the normal game show, copy the host's voice packs to everyone else (see
+   [setting up a game](#setting-up-a-game)). Dub mode can send its selected pack
+   from the host when somebody is missing it.
 5. Launch the new exe and click **ONLINE** in the top right of the main menu
    (or press **F9**), then host or join.
 
@@ -110,7 +111,7 @@ doesn't do that any more. See
 
 It downloads about 140mb of tools ([gdRE](https://github.com/GDRETools/gdsdecomp)
 and [Godot](https://godotengine.org), both free), builds the mod, and leaves
-`TheChoicerVoicer-Multiplayer-1.1.8.exe` sat in the same folder. Takes a few
+`TheChoicerVoicer-Multiplayer-1.2.0-dev.exe` sat in the same folder. Takes a few
 minutes. Run it again later and it reuses the downloads so it's quicker the
 second time.
 
@@ -151,9 +152,8 @@ python install_mod.py "C:\path\to\TheChoicerVoicer_0-5-1 stable.exe"
 
 ## setting up a game
 
-Everybody needs the same voice packs. This is the bit that trips people up, so
-do it before you try to play. Scores get worked out against the clips you're
-performing, so everyone needs the actual clip files the host picks.
+Everybody needs the clips used by the normal game show. Scores get worked out
+against those clips, so copy the host's voice packs before you play that mode.
 
 Copy the host's
 
@@ -164,8 +164,20 @@ Copy the host's
 folder over to everyone else, into the same place. Paste that path straight into
 explorer's address bar if you can't find it.
 
-The lobby lists anything it spots as different, and the mod would rather flat out
-refuse to start than let you desync halfway through a round.
+The lobby lists anything it spots as different, and the normal game show would
+rather flat out refuse to start than let you desync halfway through a round.
+
+Dub mode handles this differently. When the host presses Play on a dub pack,
+anyone without that exact pack is shown its name and size and chooses whether to
+download it from the host. Declining does not kick them or install anything; the
+Download button remains available if they change their mind. The host sees who
+already has it, who declined, and each download's progress. **Begin dub** stays
+disabled until every connected player has verified the pack.
+
+Received packs live in `%APPDATA%\YeahMaybe\ChoicerVoicer\multiplayer_pack_cache`
+and do not appear in the normal pack selector. A completed pack is reused by its
+content hash the next time it is selected, while an interrupted download resumes
+from the files already on disk.
 
 Everyone also needs the same build of the mod. If someone installed an older
 version they get kicked with a message saying so. Just get them to run the
@@ -185,8 +197,8 @@ name, not their real one. 2 to 4 players.
    one.
 2. Host hits **Host**. Everyone else types the host's IP in and hits **Join**.
 3. Once everyone's showing in the list, host hits **Start (choose clips)** for the
-   normal game show, or **Start (dub mode)**, picks a pack, and everyone gets
-   dragged into the match together.
+   normal game show, or **Start (dub mode)** and picks a pack. Anyone missing the
+   dub pack accepts the download; the host begins once everybody is ready.
 
 ### picking who you dub
 
@@ -382,6 +394,13 @@ acknowledged as they arrive now, which took another call, and they go over the
 wire compressed, so the audio itself is in a different shape too. Same story:
 right message on both screens, everybody rebuilds.
 
+v1.2.0-dev is on protocol 8. Dub mode identifies the selected pack by its file
+contents, offers it to anyone missing it, streams accepted downloads through the
+existing ENet connection with a bounded acknowledged window, verifies every file
+with SHA-256, and waits for the whole lobby before starting. The dub start packet
+now contains a content ID and relative clip paths rather than paths from the
+host's disk, so protocol 8 cannot play with earlier builds.
+
 **We were playing fine and then he just got kicked. No error, no crash, he was
 back at the menu.** That was a bug, fixed in v1.1.8, and it's the same 30 second
 ENet timeout as the two above with a different cause. A recording is about a
@@ -549,11 +568,18 @@ send one performance per turn, and stop everyone drifting apart between phases.
   means they're still recording, which can take as long as they like; a transfer
   that started and went quiet means the link died, and that gets 45 seconds. One
   combined limit couldn't tell those apart and skipped people for being slow.
+- Dub packs use a separate transfer node and reliable channel so adding its calls
+  cannot disturb the name-sorted join handshake. The manifest itself is paged;
+  pack files are streamed in 24KB chunks with at most 96KB unacknowledged per
+  client. Clients write straight to a resumable cache, reject unsafe paths and
+  executable formats, verify SHA-256 before reporting ready, and never hold a
+  whole video in memory.
 
 What's in `mod/`:
 
 ```
 mod/net/net_manager.gd            all the netcode, one autoload
+mod/net/pack_sync.gd              consent, cache and host-to-client dub packs
 mod/net/lobby.gd                  the lobby screen, built in code
 mod/net/dub_character_picker.gd   the casting screen, built in code
 mod/net/_selftest.gd              compiles every script in the project
@@ -564,8 +590,7 @@ mod/patches/v0_5_2/*.patch        the files that differ on 0.5.2
 mod/export_presets.cfg            the windows export preset
 ```
 
-Three new files and about 450 changed lines across 7 of the game's scripts. The
-installer reads `config/version` out of the decompiled project and picks the
+The installer reads `config/version` out of the decompiled project and picks the
 right patch set, so supporting a new build usually means one extra folder. It
 also fixes a gdRE bug where it writes node paths as `$A / B`, which every
 decompiled build needs sorting whether you're modding it or not.
@@ -591,9 +616,11 @@ godot --headless --path project -- host
 godot --headless --path project -- client
 ```
 
-`_nettest.gd` covers the bug that used to make the game unplayable after one
-pack. It runs a second show reusing the same contestant slot and barrier tags and
-checks the new take turns up instead of the old one.
+`_nettest.gd` runs a second show reusing the same contestant slot and barrier
+tags and checks the new take turns up instead of the old one. It also creates a
+throwaway dub pack larger than the transfer window: the client declines it,
+starts it on the second try, interrupts it after bytes reach disk, resumes and
+verifies it, and the host proves it did not continue until that was done.
 
 `devtest/old_peer/` is a project of its own, and needs no copy of the game. It
 connects to a host, says nothing at all, and leaves — which is exactly what a
