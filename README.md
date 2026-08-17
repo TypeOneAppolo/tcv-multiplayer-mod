@@ -269,6 +269,11 @@ available to the game and to host pack sharing. If a pack finishes while a pack
 selection screen is already open, leave and reopen that selector so the base
 game scans its folders again. Canceling an active download removes its partial
 file; retrying currently starts that archive from zero rather than resuming it.
+The browser's **Installed** view lists every pack installed through this feature,
+including its creator, folder, install date and extracted size when available.
+You can uninstall it there without finding the GameBanana submission again.
+Only folders carrying this installer's matching manifest appear in the list or
+can be removed; manually installed packs remain untouched.
 
 For the first version, the installer accepts ZIP files only. Before moving
 anything into `packs_voice`, it requires GameBanana's analysis and antivirus

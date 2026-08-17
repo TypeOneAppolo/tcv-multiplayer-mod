@@ -296,6 +296,8 @@ static func _validate_and_extract(
 		"profile_url": str(mod.get("profile_url", "")),
 		"archive_name": str(file.get("name", "")),
 		"archive_md5": str(file.get("md5", "")),
+		"installed_files": chosen.size(),
+		"installed_bytes": total,
 		"installed_unix": int(Time.get_unix_time_from_system()),
 	}
 	var manifest_file: FileAccess = FileAccess.open(staging.path_join(MANIFEST_NAME), FileAccess.WRITE)
@@ -459,8 +461,36 @@ static func installed_path(mod_id: int) -> String:
 	return ""
 
 
-static func uninstall(mod_id: int) -> Dictionary:
-	var path: String = installed_path(mod_id).replace("\\", "/").trim_suffix("/")
+static func installed_packs(voice_root_override: String = "") -> Array[Dictionary]:
+	var voice_root: String = (
+		str(FileManager.MODPACKS_VOICE) if voice_root_override.is_empty()
+		else voice_root_override).replace("\\", "/").trim_suffix("/")
+	var packs: Array[Dictionary] = []
+	var parent: DirAccess = DirAccess.open(voice_root)
+	if parent == null: return packs
+	parent.include_hidden = true
+	for folder: String in parent.get_directories():
+		if parent.is_link(folder): continue
+		var path: String = voice_root.path_join(folder)
+		var manifest_path: String = path.path_join(MANIFEST_NAME)
+		if not FileAccess.file_exists(manifest_path): continue
+		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(manifest_path))
+		if (not parsed is Dictionary or str(parsed.get("provider", "")) != "gamebanana"
+			or int(parsed.get("mod_id", 0)) <= 0):
+			continue
+		var record: Dictionary = parsed.duplicate(true)
+		record["path"] = path
+		record["folder"] = folder
+		packs.append(record)
+	packs.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return str(a.get("name", "")).naturalnocasecmp_to(str(b.get("name", ""))) < 0)
+	return packs
+
+
+static func uninstall(mod_id: int, exact_path: String = "") -> Dictionary:
+	var path: String = (
+		exact_path if not exact_path.is_empty()
+		else installed_path(mod_id)).replace("\\", "/").trim_suffix("/")
 	if path.is_empty(): return {"error": "This community pack is not installed."}
 	var voice_root: String = str(FileManager.MODPACKS_VOICE).replace("\\", "/").trim_suffix("/")
 	return _uninstall_path(mod_id, path, voice_root, true)

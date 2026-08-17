@@ -50,13 +50,19 @@ var _install_progress: ProgressBar
 var _install_button: Button
 var _uninstall_button: Button
 var _open_button: Button
+var _installed_button: Button
 var _downloads_button: Button
 var _downloads_modal: Control
 var _downloads_list: VBoxContainer
 var _download_summary: Label
 var _online_downloads_box: CheckBox
 var _downloads_note: Label
+var _installed_modal: Control
+var _installed_list: VBoxContainer
+var _installed_summary: Label
+var _installed_feedback: Label
 var _uninstall_dialog: ConfirmationDialog
+var _pending_uninstall: Dictionary = {}
 
 
 func _ready() -> void:
@@ -95,7 +101,9 @@ func _exit_tree() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if not event.is_action_pressed("ui_cancel"): return
 	get_viewport().set_input_as_handled()
-	if is_instance_valid(_downloads_modal) and _downloads_modal.visible:
+	if is_instance_valid(_installed_modal) and _installed_modal.visible:
+		_installed_modal.visible = false
+	elif is_instance_valid(_downloads_modal) and _downloads_modal.visible:
 		_downloads_modal.visible = false
 	else:
 		closed.emit()
@@ -138,6 +146,10 @@ func _build_ui() -> void:
 	source.add_theme_font_size_override("font_size", 13)
 	source.add_theme_color_override("font_color", ACCENT)
 	header.add_child(source)
+	_installed_button = _button("Installed", false)
+	_installed_button.tooltip_text = "View and uninstall community packs installed by this mod."
+	_installed_button.pressed.connect(_show_installed)
+	header.add_child(_installed_button)
 	_downloads_button = _button("Downloads", false)
 	_downloads_button.pressed.connect(_show_downloads)
 	header.add_child(_downloads_button)
@@ -321,6 +333,7 @@ func _build_ui() -> void:
 	detail.add_child(caution)
 
 	_build_downloads_modal()
+	_build_installed_modal()
 
 
 func _build_downloads_modal() -> void:
@@ -388,6 +401,69 @@ func _build_downloads_modal() -> void:
 	_uninstall_dialog.title = "Uninstall community pack?"
 	_uninstall_dialog.confirmed.connect(_confirm_uninstall)
 	add_child(_uninstall_dialog)
+
+
+func _build_installed_modal() -> void:
+	_installed_modal = Control.new()
+	_installed_modal.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_installed_modal.mouse_filter = Control.MOUSE_FILTER_STOP
+	_installed_modal.visible = false
+	add_child(_installed_modal)
+	var backdrop: = ColorRect.new()
+	backdrop.color = Color(0.01, 0.015, 0.03, 0.88)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_installed_modal.add_child(backdrop)
+	var center: = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_installed_modal.add_child(center)
+	var panel: = PanelContainer.new()
+	panel.custom_minimum_size = Vector2(720, 470)
+	panel.add_theme_stylebox_override("panel", _box(SURFACE, 12, BORDER, 1))
+	center.add_child(panel)
+	var margin: = MarginContainer.new()
+	for side: String in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 20)
+	panel.add_child(margin)
+	var column: = VBoxContainer.new()
+	column.add_theme_constant_override("separation", 12)
+	margin.add_child(column)
+	var header: = HBoxContainer.new()
+	header.add_theme_constant_override("separation", 8)
+	column.add_child(header)
+	var title: = Label.new()
+	title.text = "INSTALLED COMMUNITY PACKS"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", 24)
+	title.add_theme_color_override("font_color", TEXT)
+	header.add_child(title)
+	var refresh: Button = _button("Refresh", false)
+	refresh.pressed.connect(_render_installed)
+	header.add_child(refresh)
+	var close: Button = _button("Close", false)
+	close.pressed.connect(func() -> void: _installed_modal.visible = false)
+	header.add_child(close)
+	_installed_summary = Label.new()
+	_installed_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_installed_summary.add_theme_color_override("font_color", MUTED)
+	column.add_child(_installed_summary)
+	var scroll: = ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	column.add_child(scroll)
+	_installed_list = VBoxContainer.new()
+	_installed_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_installed_list.add_theme_constant_override("separation", 8)
+	scroll.add_child(_installed_list)
+	_installed_feedback = Label.new()
+	_installed_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_installed_feedback.add_theme_color_override("font_color", MUTED)
+	column.add_child(_installed_feedback)
+	var note: = Label.new()
+	note.text = ("Only packs installed by this browser are listed. Manually installed folders are "
+		+ "never removed, and uninstalling is disabled during online play.")
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_color_override("font_color", MUTED)
+	column.add_child(note)
 
 
 func _load_page(force: bool = false) -> void:
@@ -634,8 +710,84 @@ func _update_selected_active_download() -> bool:
 
 
 func _show_downloads() -> void:
+	if is_instance_valid(_installed_modal): _installed_modal.visible = false
 	_render_downloads()
 	_downloads_modal.visible = true
+
+
+func _show_installed() -> void:
+	if is_instance_valid(_downloads_modal): _downloads_modal.visible = false
+	_installed_feedback.text = ""
+	_render_installed()
+	_installed_modal.visible = true
+
+
+func _render_installed() -> void:
+	if not is_instance_valid(_installed_list): return
+	for child: Node in _installed_list.get_children():
+		_installed_list.remove_child(child)
+		child.queue_free()
+	var packs: Array[Dictionary] = INSTALLER_SCRIPT.installed_packs()
+	_installed_summary.text = (
+		"%d community pack%s installed by this browser." % [
+			packs.size(), "" if packs.size() == 1 else "s"])
+	if packs.is_empty():
+		var empty: = Label.new()
+		empty.text = "No browser-installed community packs were found."
+		empty.add_theme_color_override("font_color", MUTED)
+		_installed_list.add_child(empty)
+		return
+	for pack: Dictionary in packs:
+		var card: = PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _box(SURFACE_2, 8, BORDER, 1))
+		_installed_list.add_child(card)
+		var row: = HBoxContainer.new()
+		row.add_theme_constant_override("separation", 12)
+		card.add_child(row)
+		var info: = VBoxContainer.new()
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(info)
+		var title: = Label.new()
+		title.text = str(pack.get("name", pack.get("folder", "Dub pack")))
+		title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		title.add_theme_color_override("font_color", TEXT)
+		info.add_child(title)
+		var details: PackedStringArray = []
+		var author: String = str(pack.get("author", "")).strip_edges()
+		if not author.is_empty(): details.append("by " + author)
+		var installed_bytes: int = int(pack.get("installed_bytes", 0))
+		if installed_bytes > 0: details.append(_format_bytes(installed_bytes))
+		var installed_unix: int = int(pack.get("installed_unix", 0))
+		if installed_unix > 0:
+			details.append("installed " + Time.get_datetime_string_from_unix_time(
+				installed_unix, true))
+		var meta: = Label.new()
+		meta.text = "  •  ".join(details)
+		meta.add_theme_color_override("font_color", MUTED)
+		info.add_child(meta)
+		var folder: = Label.new()
+		folder.text = "Folder: %s" % str(pack.get("folder", ""))
+		folder.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		folder.add_theme_font_size_override("font_size", 12)
+		folder.add_theme_color_override("font_color", MUTED.darkened(0.12))
+		info.add_child(folder)
+		var actions: = VBoxContainer.new()
+		actions.add_theme_constant_override("separation", 6)
+		row.add_child(actions)
+		var mod_id: int = int(pack.get("mod_id", 0))
+		var uninstall: Button = _button("Uninstall", false)
+		uninstall.disabled = Net.is_online() or _mod_has_active_job(mod_id)
+		if Net.is_online():
+			uninstall.tooltip_text = "Leave online play before changing the pack library."
+		elif _mod_has_active_job(mod_id):
+			uninstall.tooltip_text = "Cancel or finish this pack's active download first."
+		uninstall.pressed.connect(_request_uninstall.bind(pack))
+		actions.add_child(uninstall)
+		var profile_url: String = str(pack.get("profile_url", ""))
+		if profile_url.begins_with("https://gamebanana.com/"):
+			var page: Button = _button("GameBanana", false)
+			page.pressed.connect(_open_gamebanana.bind(profile_url))
+			actions.add_child(page)
 
 
 func _render_downloads() -> void:
@@ -723,27 +875,55 @@ func _mod_has_active_job(mod_id: int) -> bool:
 	return false
 
 
+func _open_gamebanana(url: String) -> void:
+	if url.begins_with("https://gamebanana.com/"): OS.shell_open(url)
+
+
 func _on_uninstall_pressed() -> void:
 	var mod_id: int = int(_detail.get("id", 0))
 	if mod_id <= 0 or Net.is_online() or _mod_has_active_job(mod_id): return
+	_request_uninstall({
+		"mod_id": mod_id,
+		"name": str(_detail.get("name", "Dub pack")),
+		"path": INSTALLER_SCRIPT.installed_path(mod_id),
+	})
+
+
+func _request_uninstall(pack: Dictionary) -> void:
+	var mod_id: int = int(pack.get("mod_id", 0))
+	if mod_id <= 0 or Net.is_online() or _mod_has_active_job(mod_id): return
+	_pending_uninstall = pack.duplicate(true)
 	_uninstall_dialog.dialog_text = ("Remove '%s' and all files this installer placed in its pack folder?\n\n"
-		+ "Manually installed packs are never removed by this button.") % str(_detail.get("name", "Dub pack"))
+		+ "Manually installed packs are never removed by this button.") % str(
+			pack.get("name", "Dub pack"))
 	_uninstall_dialog.popup_centered(Vector2i(560, 190))
 
 
 func _confirm_uninstall() -> void:
-	var mod_id: int = int(_detail.get("id", 0))
+	var pack: Dictionary = _pending_uninstall.duplicate(true)
+	_pending_uninstall.clear()
+	var mod_id: int = int(pack.get("mod_id", 0))
 	if mod_id <= 0 or Net.is_online() or _mod_has_active_job(mod_id): return
-	var result: Dictionary = INSTALLER_SCRIPT.uninstall(mod_id)
+	var result: Dictionary = INSTALLER_SCRIPT.uninstall(mod_id, str(pack.get("path", "")))
 	if result.has("error"):
-		_install_status.text = str(result["error"])
-		_install_status.add_theme_color_override("font_color", DANGER)
+		var message: String = str(result["error"])
+		if is_instance_valid(_installed_feedback):
+			_installed_feedback.text = message
+			_installed_feedback.add_theme_color_override("font_color", DANGER)
+		if int(_detail.get("id", 0)) == mod_id:
+			_install_status.text = message
+			_install_status.add_theme_color_override("font_color", DANGER)
 		return
 	_downloads.dismiss_for_mod(mod_id)
 	Net.community_pack_library_changed()
-	_refresh_install_action()
-	_install_status.text = "Uninstalled %s." % str(_detail.get("name", "community pack"))
-	_install_status.add_theme_color_override("font_color", SUCCESS)
+	if int(_detail.get("id", 0)) == mod_id:
+		_refresh_install_action()
+		_install_status.text = "Uninstalled %s." % str(pack.get("name", "community pack"))
+		_install_status.add_theme_color_override("font_color", SUCCESS)
+	if is_instance_valid(_installed_list):
+		_render_installed()
+		_installed_feedback.text = "Uninstalled %s." % str(pack.get("name", "community pack"))
+		_installed_feedback.add_theme_color_override("font_color", SUCCESS)
 
 
 func _on_request_failed(message: String) -> void:

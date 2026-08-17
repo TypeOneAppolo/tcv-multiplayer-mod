@@ -168,6 +168,12 @@ func _test_flat_pack_archive(installer: Script, failures: Array[String]) -> void
 				or not FileAccess.file_exists(installed.path_join("dub_video.ogv"))
 				or FileAccess.file_exists(test_root.path_join("dub_video.ogv"))):
 				failures.append("flat ZIP files were not contained in their own pack folder")
+			var listed: Array[Dictionary] = installer.installed_packs(test_root)
+			if (listed.size() != 1 or str(listed[0].get("path", "")) != installed
+				or int(listed[0].get("mod_id", 0)) != 2147483645
+				or int(listed[0].get("installed_files", 0)) != 3
+				or int(listed[0].get("installed_bytes", 0)) != 9):
+				failures.append("installed community-pack library scan")
 			var removed: Dictionary = installer._uninstall_path(
 				2147483645, installed, test_root, false)
 			if removed.has("error") or DirAccess.dir_exists_absolute(installed):
