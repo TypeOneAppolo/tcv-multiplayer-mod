@@ -61,6 +61,18 @@ func _run_community_pack_tests(failures: Array[String]) -> void:
 	var page: Dictionary = client.parse_page_json(catalog_json, 3, true)
 	if int(page.get("page", 0)) != 3 or Array(page.get("records", [])).size() != 1:
 		failures.append("GameBanana catalog normalization/category filtering")
+	var search_url: String = client.build_search_url("movie night", 2)
+	if (search_url.contains("%%")
+		or not search_url.contains("_sSearchString=movie%20night")
+		or not search_url.contains("_csvFields=name%2Cdescription%2Cowner%2Ccredits")
+		or not search_url.ends_with("_nPage=2")):
+		failures.append("GameBanana search URL encoding")
+	var api_error: String = client._http_error_message(400, JSON.stringify({
+		"_sErrorCode": "INPUT_ERRORS",
+		"_aErrorData": {"_sSearchString": {"_sErrorMessage": "Must be 2 characters or more"}},
+	}))
+	if not api_error.contains("Must be 2 characters or more"):
+		failures.append("GameBanana API error details")
 
 	var detail_json: String = JSON.stringify({
 		"_idRow": 10,

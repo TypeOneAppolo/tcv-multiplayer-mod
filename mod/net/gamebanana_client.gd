@@ -15,6 +15,7 @@ const API_BODY_LIMIT: int = 8 * 1024 * 1024
 const INDEX_URL: String = "https://gamebanana.com/apiv13/Mod/Index"
 const SEARCH_URL: String = "https://gamebanana.com/apiv13/Util/Search/Results"
 const DETAIL_URL: String = "https://gamebanana.com/apiv11/Mod/%d"
+const SEARCH_FIELDS: String = "name,description,owner,credits"
 
 var _http: HTTPRequest
 var _request_kind: String = ""
@@ -57,17 +58,23 @@ func search(query: String, page: int, sort: String = "best_match", force: bool =
 	if clean.is_empty():
 		fetch_page(page, "Generic_Newest", force)
 		return
+	if clean.length() < 2:
+		request_failed.emit("Search for at least 2 characters.")
+		return
 	_request_kind = "search"
 	_request_page = maxi(1, page)
-	var url: String = (SEARCH_URL
+	_start(build_search_url(clean, _request_page, sort), force)
+
+
+static func build_search_url(query: String, page: int, sort: String = "best_match") -> String:
+	return (SEARCH_URL
 		+ "?_sModelName=Mod"
 		+ "&_sOrder=%s" % sort.uri_encode()
 		+ "&_idGameRow=%d" % GAME_ID
-		+ "&_sSearchString=%s" % clean.uri_encode()
-		+ "&_csvFields=name%%2Cdescription%%2Cowner%%2Ccredits"
+		+ "&_sSearchString=%s" % query.strip_edges().uri_encode()
+		+ "&_csvFields=%s" % SEARCH_FIELDS.uri_encode()
 		+ "&_nPerpage=%d" % PAGE_SIZE
-		+ "&_nPage=%d" % _request_page)
-	_start(url, force)
+		+ "&_nPage=%d" % maxi(1, page))
 
 
 func fetch_detail(mod_id: int, force: bool = false) -> void:
@@ -100,7 +107,7 @@ func _on_request_completed(
 		request_failed.emit("GameBanana request failed (%d)." % result)
 		return
 	if response_code < 200 or response_code >= 300:
-		request_failed.emit("GameBanana returned HTTP %d." % response_code)
+		request_failed.emit(_http_error_message(response_code, body.get_string_from_utf8()))
 		return
 	var text: String = body.get_string_from_utf8()
 	if kind == "detail":
@@ -111,6 +118,20 @@ func _on_request_completed(
 		var page: Dictionary = parse_page_json(text, _request_page, kind == "search")
 		if page.has("error"): request_failed.emit(str(page["error"]))
 		else: page_loaded.emit(page)
+
+
+static func _http_error_message(response_code: int, text: String) -> String:
+	var parsed: Variant = JSON.parse_string(text)
+	if parsed is Dictionary:
+		var error_data: Dictionary = _as_dictionary(parsed.get("_aErrorData", {}))
+		for value: Variant in error_data.values():
+			if value is Dictionary:
+				var message: String = str(value.get("_sErrorMessage", "")).strip_edges()
+				if not message.is_empty():
+					return "GameBanana rejected the request: %s." % message.trim_suffix(".")
+		var code: String = str(parsed.get("_sErrorCode", "")).strip_edges()
+		if not code.is_empty(): return "GameBanana rejected the request: %s." % code
+	return "GameBanana returned HTTP %d." % response_code
 
 
 static func parse_page_json(text: String, page: int = 1, dub_only: bool = false) -> Dictionary:
