@@ -201,6 +201,7 @@ func _run_download_queue_tests(failures: Array[String]) -> void:
 	add_child(fake_net)
 	queue.configure(fake_net)
 	add_child(queue)
+	queue.set_allow_online_downloads(false)
 	var mod: Dictionary = {"id": 42, "name": "Queue test"}
 	var invalid_file: Dictionary = {"id": 7, "name": "not-a-zip.rar", "size": 100}
 	var id: String = queue.enqueue(mod, invalid_file)
@@ -236,5 +237,15 @@ func _run_download_queue_tests(failures: Array[String]) -> void:
 	if (str(queue.get_job(failed_id).get("state", "")) != "failed"
 		or queue.active_count() != 0):
 		failures.append("failed download did not release the queue")
+	queue.dismiss(failed_id)
+	fake_net.online = true
+	queue.set_allow_online_downloads(true)
+	var online_id: String = queue.enqueue(
+		{"id": 44, "name": "Online opt-in"},
+		{"id": 8, "name": "still-not-a-zip.rar", "size": 100})
+	queue._pump()
+	if str(queue.get_job(online_id).get("state", "")) != "failed":
+		failures.append("online download opt-in did not release a queued job")
+	queue.set_allow_online_downloads(false)
 	queue.queue_free()
 	fake_net.queue_free()

@@ -6,6 +6,7 @@ extends Node
 signal changed
 
 const INSTALLER_SCRIPT: Script = preload("res://net/community_pack_installer.gd")
+const SETTINGS_PATH: String = "user://community_pack_settings.json"
 
 var _net: Node
 var _installer: Node
@@ -15,6 +16,7 @@ var _cancel_requested: bool = false
 var _last_online: bool = false
 var _poll_elapsed: float = 0.0
 var _last_progress_emit_msec: int = 0
+var _allow_online_downloads: bool = false
 
 
 func configure(net: Node) -> void:
@@ -24,6 +26,7 @@ func configure(net: Node) -> void:
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	_load_settings()
 	_installer = INSTALLER_SCRIPT.new()
 	_installer.progress.connect(_on_progress)
 	_installer.finished.connect(_on_finished)
@@ -39,7 +42,19 @@ func _process(delta: float) -> void:
 	if online != _last_online:
 		_last_online = online
 		changed.emit()
-	if _active_id.is_empty() and not online: _pump()
+	if _active_id.is_empty() and (not online or _allow_online_downloads): _pump()
+
+
+func allow_online_downloads() -> bool:
+	return _allow_online_downloads
+
+
+func set_allow_online_downloads(value: bool) -> void:
+	if _allow_online_downloads == value: return
+	_allow_online_downloads = value
+	_save_settings()
+	changed.emit()
+	if value: _pump.call_deferred()
 
 
 func enqueue(mod: Dictionary, file: Dictionary) -> String:
@@ -140,7 +155,7 @@ static func job_id(mod_id: int, file_id: int) -> String:
 
 func _pump() -> void:
 	if not _active_id.is_empty() or _installer.is_busy(): return
-	if _net != null and _net.is_online(): return
+	if _net != null and _net.is_online() and not _allow_online_downloads: return
 	for index: int in _jobs.size():
 		if str(_jobs[index].get("state", "")) != "queued": continue
 		_active_id = str(_jobs[index]["id"])
@@ -202,3 +217,17 @@ func _job_index(id: String) -> int:
 	for index: int in _jobs.size():
 		if str(_jobs[index].get("id", "")) == id: return index
 	return -1
+
+
+func _load_settings() -> void:
+	if not FileAccess.file_exists(SETTINGS_PATH): return
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(SETTINGS_PATH))
+	if parsed is Dictionary:
+		_allow_online_downloads = bool(parsed.get("allow_online_downloads", false))
+
+
+func _save_settings() -> void:
+	var output: FileAccess = FileAccess.open(SETTINGS_PATH, FileAccess.WRITE)
+	if output == null: return
+	output.store_string(JSON.stringify({"allow_online_downloads": _allow_online_downloads}, "  "))
+	output.close()

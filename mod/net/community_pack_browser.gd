@@ -54,6 +54,8 @@ var _downloads_button: Button
 var _downloads_modal: Control
 var _downloads_list: VBoxContainer
 var _download_summary: Label
+var _online_downloads_box: CheckBox
+var _downloads_note: Label
 var _uninstall_dialog: ConfirmationDialog
 
 
@@ -360,6 +362,15 @@ func _build_downloads_modal() -> void:
 	_download_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_download_summary.add_theme_color_override("font_color", MUTED)
 	column.add_child(_download_summary)
+	_online_downloads_box = CheckBox.new()
+	_online_downloads_box.text = "Allow downloads to start during online multiplayer"
+	_online_downloads_box.tooltip_text = (
+		"Large downloads can increase multiplayer latency. Active downloads are not stopped "
+		+ "when this is turned off.")
+	_online_downloads_box.add_theme_color_override("font_color", WARNING)
+	_online_downloads_box.toggled.connect(func(value: bool) -> void:
+		_downloads.set_allow_online_downloads(value))
+	column.add_child(_online_downloads_box)
 	var scroll: = ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -368,12 +379,10 @@ func _build_downloads_modal() -> void:
 	_downloads_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_downloads_list.add_theme_constant_override("separation", 8)
 	scroll.add_child(_downloads_list)
-	var note: = Label.new()
-	note.text = ("Downloads continue while this screen is closed and during offline play. "
-		+ "New queued downloads wait while you are in online multiplayer.")
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.add_theme_color_override("font_color", MUTED)
-	column.add_child(note)
+	_downloads_note = Label.new()
+	_downloads_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_downloads_note.add_theme_color_override("font_color", MUTED)
+	column.add_child(_downloads_note)
 
 	_uninstall_dialog = ConfirmationDialog.new()
 	_uninstall_dialog.title = "Uninstall community pack?"
@@ -551,7 +560,7 @@ func _refresh_install_action() -> void:
 		_install_progress.value = clampi(
 			int(job.get("received", 0)), 0, int(_install_progress.max_value))
 		var status: String = str(job.get("status", "Queued"))
-		if state == "queued" and Net.is_online():
+		if state == "queued" and Net.is_online() and not _downloads.allow_online_downloads():
 			status = "Queued — waiting until you leave online multiplayer."
 		_install_status.text = status
 		_install_status.add_theme_color_override("font_color", MUTED)
@@ -569,12 +578,15 @@ func _refresh_install_action() -> void:
 	_install_progress.visible = false
 	_install_button.text = "Add to download queue"
 	_install_button.disabled = not problem.is_empty()
-	if Net.is_online():
-		_install_status.text = "This will wait in the queue until you leave online multiplayer."
-		_install_status.add_theme_color_override("font_color", WARNING)
-	elif not problem.is_empty():
+	if not problem.is_empty():
 		_install_status.text = problem
 		_install_status.add_theme_color_override("font_color", DANGER)
+	elif Net.is_online() and not _downloads.allow_online_downloads():
+		_install_status.text = "This will wait in the queue until you leave online multiplayer."
+		_install_status.add_theme_color_override("font_color", WARNING)
+	elif Net.is_online():
+		_install_status.text = "Ready to queue online. Large downloads may increase multiplayer latency."
+		_install_status.add_theme_color_override("font_color", WARNING)
 	else:
 		_install_status.text = "Ready to queue. Downloads continue during offline play."
 		_install_status.add_theme_color_override("font_color", MUTED)
@@ -594,6 +606,8 @@ func _on_install_pressed() -> void:
 
 func _on_downloads_changed() -> void:
 	if not is_instance_valid(_downloads_button): return
+	if is_instance_valid(_online_downloads_box):
+		_online_downloads_box.set_pressed_no_signal(_downloads.allow_online_downloads())
 	var active: int = _downloads.active_count()
 	_downloads_button.text = "Downloads (%d)" % active if active > 0 else "Downloads"
 	if is_instance_valid(_downloads_modal) and _downloads_modal.visible: _render_downloads()
@@ -613,7 +627,7 @@ func _update_selected_active_download() -> bool:
 	_install_progress.max_value = maxi(1, int(job.get("total", file.get("size", 0))))
 	_install_progress.value = clampi(int(job.get("received", 0)), 0, int(_install_progress.max_value))
 	_install_status.text = str(job.get("status", "Queued"))
-	if state == "queued" and Net.is_online():
+	if state == "queued" and Net.is_online() and not _downloads.allow_online_downloads():
 		_install_status.text = "Queued — waiting until you leave online multiplayer."
 	_install_status.add_theme_color_override("font_color", MUTED)
 	return true
@@ -632,7 +646,13 @@ func _render_downloads() -> void:
 	var jobs: Array[Dictionary] = _downloads.get_jobs()
 	var active: int = _downloads.active_count()
 	_download_summary.text = (
-		"%d active or queued. Downloads run one at a time to avoid saturating the connection." % active)
+		"%d active or queued. Downloads run one at a time to limit connection saturation." % active)
+	_downloads_note.text = (
+		"Downloads continue while this screen is closed. Online starts are enabled; turning "
+		+ "this off will not stop the active download, but the next queued item will wait."
+		if _downloads.allow_online_downloads()
+		else "Downloads continue while this screen is closed and during offline play. New queued "
+		+ "downloads wait while you are in online multiplayer unless you enable the option above.")
 	if jobs.is_empty():
 		var empty: = Label.new()
 		empty.text = "No downloads in this session."
@@ -659,7 +679,7 @@ func _render_downloads() -> void:
 		var state: String = str(job.get("state", "queued"))
 		var status: = Label.new()
 		status.text = str(job.get("status", state.capitalize()))
-		if state == "queued" and Net.is_online():
+		if state == "queued" and Net.is_online() and not _downloads.allow_online_downloads():
 			status.text = "Queued — waiting until online multiplayer closes"
 		if state == "failed" and not str(job.get("error", "")).is_empty():
 			status.text += " — " + str(job["error"])

@@ -251,13 +251,18 @@ Extras when that screen's layout can be identified safely. This is an in-game
 catalog, not an embedded web page: it fetches GameBanana's public JSON, the
 selected preview image and, only after you queue it, the selected archive.
 
-Installation is deliberately available only while you are out of an online
-lobby. Pick a submission, choose one of its files and press **Add to download
-queue**. Downloads run one at a time so several 200–450 MB archives do not fight
-over the same connection. You can queue more, cancel or retry them from
-**Downloads**, then close the browser and play any offline mode while the queue
-continues under the game's persistent Net autoload. A newly queued job waits if
-you are currently in online multiplayer.
+Pick a submission, choose one of its files and press **Add to download queue**.
+Downloads run one at a time so several 200–450 MB archives do not fight over the
+same connection. You can queue more, cancel or retry them from **Downloads**,
+then close the browser while the queue continues under the game's persistent Net
+autoload.
+
+By default, a newly queued job waits while you are in online multiplayer. The
+Downloads panel has a persistent **Allow downloads to start during online
+multiplayer** option for players who prefer otherwise. A large HTTPS transfer can
+still increase latency by saturating the connection even on a fast line, so the
+option defaults off. Turning it off never interrupts the active download; it only
+makes the next queued item wait until you leave online play.
 
 A successful install goes into the game's normal `packs_voice` folder, so it is
 available to the game and to host pack sharing. If a pack finishes while a pack
