@@ -1032,7 +1032,8 @@ func _show_scanning() -> void:
 	_panel.visible = true
 	_title.text = "EXPERIMENTAL DUB PACK SHARING"
 	_detail.text = ("Preparing the selected pack. Sharing is experimental: large transfers may be slow "
-		+ "or cause disconnects on weaker connections. Nothing will be offered until you confirm.")
+		+ "or cause disconnects on weaker connections. Only use it when everyone trusts the host and "
+		+ "the source of the pack. Nothing will be offered until you confirm.")
 	_roster.text = ""
 	_progress.visible = false
 	_primary.visible = false
@@ -1073,7 +1074,8 @@ func _render() -> void:
 	if _net != null and _net.is_host():
 		_title.text = "EXPERIMENTAL DUB PACK SHARING"
 		_detail.text = ("%s — %s. Host-to-player pack sharing is experimental. Large transfers may "
-			+ "be slow or cause disconnects on weaker connections.") % [
+			+ "be slow or cause disconnects on weaker connections. Only use it when everyone trusts "
+			+ "the host and the source of this pack.") % [
 			_active_offer.get("name", "Dub pack"), _format_bytes(total)]
 		var ignored: int = int(_active_offer.get("ignored", 0))
 		if ignored > 0:
@@ -1105,7 +1107,7 @@ func _render() -> void:
 	else:
 		_title.text = "EXPERIMENTAL PACK DOWNLOAD"
 		_detail.text = ("%s — %s. Host-to-player sharing is experimental and may be slow or "
-			+ "disconnect on unstable connections.") % [
+			+ "disconnect on unstable connections. Only download packs from a host you trust.") % [
 			_active_offer.get("name", "Dub pack"), _format_bytes(total)]
 		_roster.text = _client_status_text()
 		_progress.visible = _client_state in ["downloading", "verifying", "ready"]
