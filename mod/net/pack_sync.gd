@@ -1126,6 +1126,10 @@ func _render_deferred() -> void:
 	_render()
 
 
+func _development_controls_enabled() -> bool:
+	return _net != null and str(_net.MOD_VERSION).contains("-dev")
+
+
 func _render() -> void:
 	if not is_instance_valid(_panel) or _active_offer.is_empty(): return
 	if _panel_dismissed:
@@ -1159,7 +1163,8 @@ func _render() -> void:
 					status += " — " + str(record["error"])
 				lines.append("%s: %s" % [_net.player_name_for_slot(slot), status])
 			_roster.text = "\n".join(lines)
-		_force_download_box.visible = not _host_sharing_confirmed
+		_force_download_box.visible = (
+			not _host_sharing_confirmed and _development_controls_enabled())
 		_progress.visible = false
 		_primary.visible = true
 		_primary.text = "Begin dub" if _host_sharing_confirmed else "Enable experimental sharing"
@@ -1233,7 +1238,8 @@ func _begin_host_sharing() -> void:
 	if (_net == null or not _net.is_host() or _active_offer.is_empty()
 		or _host_sharing_confirmed): return
 	_active_offer["force_download"] = _test_force_download or (
-		is_instance_valid(_force_download_box) and _force_download_box.button_pressed)
+		_development_controls_enabled() and is_instance_valid(_force_download_box)
+		and _force_download_box.button_pressed)
 	_host_sharing_confirmed = true
 	for peer: int in _net.players:
 		if peer != 1: _send_offer_manifest.call_deferred(peer, str(_active_offer["id"]))
