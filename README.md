@@ -245,16 +245,25 @@ another one. No need to restart anything.
 ## community packs (experimental)
 
 The mod now has a native **Community Packs** screen for Dub Mode submissions on
-GameBanana. Open it from **Browse community packs** in the online screen. It also
-adds a **COMMUNITY PACKS** button to the game's Extras screen when that screen's
-layout can be identified safely. This is an in-game catalog, not an embedded web
-page: it fetches GameBanana's public JSON, the selected preview image and, only
-after you press Install, the selected archive.
+GameBanana. Open **COMMUNITY PACKS** directly from the normal main menu, or use
+**Browse community packs** in the online screen. The mod also tries to add it to
+Extras when that screen's layout can be identified safely. This is an in-game
+catalog, not an embedded web page: it fetches GameBanana's public JSON, the
+selected preview image and, only after you queue it, the selected archive.
 
 Installation is deliberately available only while you are out of an online
-lobby. Pick a submission, choose one of its files and press **Install pack**. A
-successful install goes into the game's normal `packs_voice` folder, so it is
-available to the game and to host pack sharing on the next lobby.
+lobby. Pick a submission, choose one of its files and press **Add to download
+queue**. Downloads run one at a time so several 200–450 MB archives do not fight
+over the same connection. You can queue more, cancel or retry them from
+**Downloads**, then close the browser and play any offline mode while the queue
+continues under the game's persistent Net autoload. A newly queued job waits if
+you are currently in online multiplayer.
+
+A successful install goes into the game's normal `packs_voice` folder, so it is
+available to the game and to host pack sharing. If a pack finishes while a pack
+selection screen is already open, leave and reopen that selector so the base
+game scans its folders again. Canceling an active download removes its partial
+file; retrying currently starts that archive from zero rather than resuming it.
 
 For the first version, the installer accepts ZIP files only. Before moving
 anything into `packs_voice`, it requires GameBanana's analysis and antivirus
@@ -272,9 +281,10 @@ media trustworthy. A malicious file could still target a bug in a media decoder.
 Only install packs from creators you trust. Content-rated submissions are hidden
 unless you explicitly enable them.
 
-There is no in-game update or uninstall flow yet. Delete an installed pack from
-`packs_voice` the same way you would any manually downloaded pack. RAR and 7z
-archives still need to be installed manually.
+An installed submission has an **Uninstall** button. It only removes a direct
+child of `packs_voice` carrying the matching manifest written by this installer;
+manually installed folders are deliberately left alone. There is no update flow
+yet. RAR and 7z archives still need to be installed manually.
 
 ## is this a virus
 
@@ -628,6 +638,7 @@ mod/net/pack_sync.gd              consent, cache and host-to-client dub packs
 mod/net/gamebanana_client.gd      GameBanana catalog and response normalization
 mod/net/community_pack_browser.gd native community catalog screen
 mod/net/community_pack_installer.gd staged, validated ZIP installation
+mod/net/community_pack_queue.gd    background queue, cancellation and retry
 mod/net/lobby.gd                  the lobby screen, built in code
 mod/net/dub_character_picker.gd   the casting screen, built in code
 mod/net/_selftest.gd              compiles every script in the project
@@ -690,11 +701,11 @@ against a clean decompile with the node path fix applied.
 
 - The lobby button is drawn over the menu by the mod rather than being a real
   menu entry, so it doesn't match the game's own styling.
-- The Community Packs button is inserted into Extras at runtime because the
-  purchased game's scene is not stored in this repository. The online-screen
-  link is the fallback if a future game build changes that menu layout.
-- The community installer supports ZIP archives only and has no update or
-  uninstall screen yet.
+- Extras integration is attempted at runtime because the purchased game's scene
+  is not stored here. The normal main-menu and online-screen buttons are the
+  reliable entry points if a future game build changes Extras.
+- The community installer supports ZIP archives only, has no update screen, and
+  restarts canceled downloads rather than resuming their partial files.
 - Windows 0.5.1 and 0.5.2 dev-2. Anything else fails with a clear error when it
   goes to patch it.
 - Everyone needs the same build. The mod checks and kicks you out with a message

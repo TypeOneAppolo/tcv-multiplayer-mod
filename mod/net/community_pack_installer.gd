@@ -459,6 +459,42 @@ static func installed_path(mod_id: int) -> String:
 	return ""
 
 
+static func uninstall(mod_id: int) -> Dictionary:
+	var path: String = installed_path(mod_id).replace("\\", "/").trim_suffix("/")
+	if path.is_empty(): return {"error": "This community pack is not installed."}
+	var voice_root: String = str(FileManager.MODPACKS_VOICE).replace("\\", "/").trim_suffix("/")
+	return _uninstall_path(mod_id, path, voice_root, true)
+
+
+static func _uninstall_path(
+	mod_id: int, installed: String, voice_root_value: String, update_registry: bool
+) -> Dictionary:
+	var path: String = installed.replace("\\", "/").trim_suffix("/")
+	var voice_root: String = voice_root_value.replace("\\", "/").trim_suffix("/")
+	# Only a direct child created by this installer can be removed. Never turn a
+	# registry entry or edited manifest into a recursive delete outside the pack
+	# library.
+	if path.get_base_dir() != voice_root:
+		return {"error": "The installed pack is outside packs_voice and was not removed."}
+	var parent: DirAccess = DirAccess.open(voice_root)
+	if parent == null or parent.is_link(path.get_file()):
+		return {"error": "The installed pack folder is not safe to remove automatically."}
+	var manifest_path: String = path.path_join(MANIFEST_NAME)
+	if not FileAccess.file_exists(manifest_path):
+		return {"error": "This folder has no community-pack manifest, so it was not removed."}
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(manifest_path))
+	if (not parsed is Dictionary or str(parsed.get("provider", "")) != "gamebanana"
+		or int(parsed.get("mod_id", 0)) != mod_id):
+		return {"error": "The community-pack manifest did not match; nothing was removed."}
+	if not _remove_installed_tree(path, path):
+		return {"error": "Could not completely remove the installed pack."}
+	if update_registry:
+		var registry: Dictionary = load_registry()
+		registry.erase(str(mod_id))
+		save_registry(registry)
+	return {"path": path}
+
+
 static func load_registry() -> Dictionary:
 	if not FileAccess.file_exists(REGISTRY_PATH): return {}
 	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(REGISTRY_PATH))
@@ -507,9 +543,27 @@ static func _remove_tree(path: String, staging_root: String) -> void:
 	if not path.begins_with(staging_root + "/") or not DirAccess.dir_exists_absolute(path): return
 	var dir: DirAccess = DirAccess.open(path)
 	if dir == null: return
+	dir.include_hidden = true
 	for child: String in dir.get_directories(): _remove_tree(path.path_join(child), staging_root)
 	for child: String in dir.get_files(): DirAccess.remove_absolute(path.path_join(child))
 	DirAccess.remove_absolute(path)
+
+
+static func _remove_installed_tree(path: String, allowed_root: String) -> bool:
+	if (path != allowed_root and not path.begins_with(allowed_root + "/")):
+		return false
+	var dir: DirAccess = DirAccess.open(path)
+	if dir == null: return false
+	dir.include_hidden = true
+	for child: String in dir.get_directories():
+		var child_path: String = path.path_join(child)
+		if dir.is_link(child):
+			if DirAccess.remove_absolute(child_path) != OK: return false
+		elif not _remove_installed_tree(child_path, allowed_root): return false
+	for child: String in dir.get_files():
+		if DirAccess.remove_absolute(path.path_join(child)) != OK: return false
+	dir = null
+	return DirAccess.remove_absolute(path) == OK
 
 
 static func _file_size(path: String) -> int:

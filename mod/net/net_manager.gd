@@ -87,6 +87,7 @@ var session_id: int = 0
 # list. It is created at startup on every peer, so its RPC path is always the
 # same: /root/Net/PackSync.
 var pack_sync: Node
+var community_pack_downloads: Node
 
 
 func is_online() -> bool: return mode != MODE.OFFLINE
@@ -1385,6 +1386,7 @@ const ENTRY_INSET: Vector2 = Vector2(24, 20)
 
 var _entry_layer: CanvasLayer
 var _entry_button: Button
+var _community_entry_button: Button
 var _community_layer: CanvasLayer
 var _community_browser: Control
 var _extras_button: Button
@@ -1404,6 +1406,13 @@ func _build_the_way_in() -> void:
 	_entry_button.focus_mode = Control.FOCUS_NONE
 	_entry_button.pressed.connect(open_lobby)
 	_entry_layer.add_child(_entry_button)
+	_community_entry_button = Button.new()
+	_community_entry_button.text = "COMMUNITY PACKS"
+	_community_entry_button.tooltip_text = (
+		"Browse and install GameBanana Dub Mode packs. Downloads continue in the background.")
+	_community_entry_button.focus_mode = Control.FOCUS_NONE
+	_community_entry_button.pressed.connect(open_community_packs)
+	_entry_layer.add_child(_community_entry_button)
 
 	# polled: there is no hook into the game's screen changes, and they all go
 	# through primary_capsule anyway.
@@ -1419,11 +1428,19 @@ func _place_entry_button() -> void:
 	if not is_instance_valid(_entry_button): return
 	_try_attach_extras_button()
 	_entry_button.visible = can_open_lobby()
+	_community_entry_button.visible = _entry_button.visible
 	if not _entry_button.visible: return
 	_entry_button.size = _entry_button.get_combined_minimum_size()
 	var view: Vector2 = _entry_layer.get_viewport().get_visible_rect().size
 	_entry_button.position = Vector2(
 		view.x - _entry_button.size.x - ENTRY_INSET.x, ENTRY_INSET.y)
+	var queued: int = community_pack_downloads.active_count()
+	_community_entry_button.text = (
+		"COMMUNITY PACKS  (%d)" % queued if queued > 0 else "COMMUNITY PACKS")
+	_community_entry_button.size = _community_entry_button.get_combined_minimum_size()
+	_community_entry_button.position = Vector2(
+		view.x - _community_entry_button.size.x - ENTRY_INSET.x,
+		_entry_button.position.y + _entry_button.size.y + 8)
 
 
 # menus only. CreateLobby frees everything under primary_capsule, so F9 mid-show
@@ -1463,6 +1480,12 @@ func _close_community_packs() -> void:
 	if is_instance_valid(_community_layer): _community_layer.queue_free()
 	_community_browser = null
 	_community_layer = null
+
+
+func community_pack_library_changed() -> void:
+	_manifest_cache.clear()
+	if is_online(): manifests[my_id()] = voice_pack_manifest()
+	_place_entry_button.call_deferred()
 
 
 # The purchased game's source is intentionally not kept in this repository, so
@@ -1525,6 +1548,10 @@ func _input(event: InputEvent) -> void:
 
 
 func _ready() -> void:
+	community_pack_downloads = preload("res://net/community_pack_queue.gd").new()
+	community_pack_downloads.name = "CommunityPackDownloads"
+	add_child(community_pack_downloads)
+	community_pack_downloads.configure(self)
 	pack_sync = preload("res://net/pack_sync.gd").new()
 	pack_sync.name = "PackSync"
 	add_child(pack_sync)

@@ -1,6 +1,21 @@
 extends Node
 # dev tool, not shipped. register as the last autoload to compile every .gd.
 
+class QueueTestNet:
+	extends Node
+	var online: bool = true
+	func is_online() -> bool: return online
+	func community_pack_library_changed() -> void: pass
+
+class QueueTestInstaller:
+	extends Node
+	signal failed(message: String)
+	var busy: bool = false
+	func is_busy() -> bool: return busy
+	func cancel() -> void:
+		busy = false
+		failed.emit("Download canceled.")
+
 func _ready() -> void:
 	var failures: Array[String] = []
 	var total: int = 0
@@ -22,6 +37,7 @@ func _ready() -> void:
 
 	print("SELFTEST | compiled %d scripts" % total)
 	_run_community_pack_tests(failures)
+	_run_download_queue_tests(failures)
 	for f: String in failures:
 		print("SELFTEST FAIL | %s" % f)
 	print("SELFTEST | %d failure(s)" % failures.size())
@@ -152,7 +168,10 @@ func _test_flat_pack_archive(installer: Script, failures: Array[String]) -> void
 				or not FileAccess.file_exists(installed.path_join("dub_video.ogv"))
 				or FileAccess.file_exists(test_root.path_join("dub_video.ogv"))):
 				failures.append("flat ZIP files were not contained in their own pack folder")
-			_remove_test_tree(installed, test_root)
+			var removed: Dictionary = installer._uninstall_path(
+				2147483645, installed, test_root, false)
+			if removed.has("error") or DirAccess.dir_exists_absolute(installed):
+				failures.append("guarded community-pack uninstall: %s" % str(removed))
 	_remove_test_tree(test_root.path_join(".tcv-community-staging"), test_root)
 	DirAccess.remove_absolute(test_root)
 	if FileAccess.file_exists(zip_path): DirAccess.remove_absolute(zip_path)
@@ -165,7 +184,57 @@ func _remove_test_tree(path: String, allowed_root: String) -> void:
 		return
 	var dir: DirAccess = DirAccess.open(path)
 	if dir == null: return
+	dir.include_hidden = true
 	for child: String in dir.get_directories():
 		_remove_test_tree(path.path_join(child), allowed_root)
 	for child: String in dir.get_files(): DirAccess.remove_absolute(path.path_join(child))
 	DirAccess.remove_absolute(path)
+
+
+func _run_download_queue_tests(failures: Array[String]) -> void:
+	var queue_script: Script = load("res://net/community_pack_queue.gd")
+	if queue_script == null:
+		failures.append("community download queue did not compile")
+		return
+	var fake_net: = QueueTestNet.new()
+	var queue: Node = queue_script.new()
+	add_child(fake_net)
+	queue.configure(fake_net)
+	add_child(queue)
+	var mod: Dictionary = {"id": 42, "name": "Queue test"}
+	var invalid_file: Dictionary = {"id": 7, "name": "not-a-zip.rar", "size": 100}
+	var id: String = queue.enqueue(mod, invalid_file)
+	if str(queue.get_job(id).get("state", "")) != "queued":
+		failures.append("download queue did not retain an online job")
+	queue.cancel(id)
+	if str(queue.get_job(id).get("state", "")) != "canceled":
+		failures.append("queued download cancellation")
+	queue.retry(id)
+	if str(queue.get_job(id).get("state", "")) != "queued":
+		failures.append("canceled download retry")
+	var real_installer: Node = queue.get("_installer")
+	var fake_installer: = QueueTestInstaller.new()
+	fake_installer.failed.connect(Callable(queue, "_on_failed"))
+	queue.add_child(fake_installer)
+	queue.set("_installer", fake_installer)
+	queue.set("_active_id", id)
+	var jobs: Array = queue.get("_jobs")
+	jobs[0]["state"] = "downloading"
+	fake_installer.busy = true
+	queue.cancel(id)
+	if (str(queue.get_job(id).get("state", "")) != "canceled"
+		or queue.active_count() != 0):
+		failures.append("active download cancellation did not release the queue")
+	queue.dismiss(id)
+	if not queue.get_job(id).is_empty(): failures.append("terminal download dismissal")
+	queue.set("_installer", real_installer)
+	fake_installer.queue_free()
+
+	fake_net.online = false
+	var failed_id: String = queue.enqueue({"id": 43, "name": "Bad archive"}, invalid_file)
+	queue._pump()
+	if (str(queue.get_job(failed_id).get("state", "")) != "failed"
+		or queue.active_count() != 0):
+		failures.append("failed download did not release the queue")
+	queue.queue_free()
+	fake_net.queue_free()

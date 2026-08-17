@@ -19,7 +19,7 @@ const SUCCESS: Color = Color("63d69a")
 const DANGER: Color = Color("ff7b83")
 
 var _catalog: Node
-var _installer: Node
+var _downloads: Node
 var _image_http: HTTPRequest
 
 var _page: int = 1
@@ -48,7 +48,13 @@ var _file_picker: OptionButton
 var _install_status: Label
 var _install_progress: ProgressBar
 var _install_button: Button
+var _uninstall_button: Button
 var _open_button: Button
+var _downloads_button: Button
+var _downloads_modal: Control
+var _downloads_list: VBoxContainer
+var _download_summary: Label
+var _uninstall_dialog: ConfirmationDialog
 
 
 func _ready() -> void:
@@ -62,17 +68,15 @@ func _ready() -> void:
 	_catalog.detail_loaded.connect(_on_detail_loaded)
 	_catalog.request_failed.connect(_on_request_failed)
 	add_child(_catalog)
-	_installer = INSTALLER_SCRIPT.new()
-	_installer.progress.connect(_on_install_progress)
-	_installer.finished.connect(_on_install_finished)
-	_installer.failed.connect(_on_install_failed)
-	add_child(_installer)
+	_downloads = Net.community_pack_downloads
+	_downloads.changed.connect(_on_downloads_changed)
 	_image_http = HTTPRequest.new()
 	_image_http.use_threads = true
 	_image_http.timeout = 12.0
 	_image_http.body_size_limit = 12 * 1024 * 1024
 	_image_http.request_completed.connect(_on_image_loaded)
 	add_child(_image_http)
+	_on_downloads_changed()
 	_load_page()
 
 
@@ -83,13 +87,15 @@ func _fit_to_viewport() -> void:
 
 func _exit_tree() -> void:
 	if is_instance_valid(_catalog): _catalog.cancel()
-	if is_instance_valid(_installer) and _installer.is_busy(): _installer.cancel()
 	if is_instance_valid(_image_http): _image_http.cancel_request()
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("ui_cancel") and not _installer.is_busy():
-		get_viewport().set_input_as_handled()
+	if not event.is_action_pressed("ui_cancel"): return
+	get_viewport().set_input_as_handled()
+	if is_instance_valid(_downloads_modal) and _downloads_modal.visible:
+		_downloads_modal.visible = false
+	else:
 		closed.emit()
 
 
@@ -130,9 +136,12 @@ func _build_ui() -> void:
 	source.add_theme_font_size_override("font_size", 13)
 	source.add_theme_color_override("font_color", ACCENT)
 	header.add_child(source)
+	_downloads_button = _button("Downloads", false)
+	_downloads_button.pressed.connect(_show_downloads)
+	header.add_child(_downloads_button)
 	var close: Button = _button("Close", false)
-	close.pressed.connect(func() -> void:
-		if not _installer.is_busy(): closed.emit())
+	close.tooltip_text = "Downloads keep running after this screen closes."
+	close.pressed.connect(func() -> void: closed.emit())
 	header.add_child(close)
 
 	var tools: = HBoxContainer.new()
@@ -292,6 +301,10 @@ func _build_ui() -> void:
 	_install_button.disabled = true
 	_install_button.pressed.connect(_on_install_pressed)
 	detail_buttons.add_child(_install_button)
+	_uninstall_button = _button("Uninstall", false)
+	_uninstall_button.visible = false
+	_uninstall_button.pressed.connect(_on_uninstall_pressed)
+	detail_buttons.add_child(_uninstall_button)
 	_open_button = _button("Open on GameBanana", false)
 	_open_button.disabled = true
 	_open_button.pressed.connect(func() -> void:
@@ -304,6 +317,68 @@ func _build_ui() -> void:
 	caution.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	caution.add_theme_color_override("font_color", WARNING)
 	detail.add_child(caution)
+
+	_build_downloads_modal()
+
+
+func _build_downloads_modal() -> void:
+	_downloads_modal = Control.new()
+	_downloads_modal.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_downloads_modal.mouse_filter = Control.MOUSE_FILTER_STOP
+	_downloads_modal.visible = false
+	add_child(_downloads_modal)
+	var backdrop: = ColorRect.new()
+	backdrop.color = Color(0.01, 0.015, 0.03, 0.88)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_downloads_modal.add_child(backdrop)
+	var center: = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_downloads_modal.add_child(center)
+	var panel: = PanelContainer.new()
+	panel.custom_minimum_size = Vector2(720, 430)
+	panel.add_theme_stylebox_override("panel", _box(SURFACE, 12, BORDER, 1))
+	center.add_child(panel)
+	var margin: = MarginContainer.new()
+	for side: String in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 20)
+	panel.add_child(margin)
+	var column: = VBoxContainer.new()
+	column.add_theme_constant_override("separation", 12)
+	margin.add_child(column)
+	var header: = HBoxContainer.new()
+	column.add_child(header)
+	var title: = Label.new()
+	title.text = "DOWNLOAD QUEUE"
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_theme_font_size_override("font_size", 24)
+	title.add_theme_color_override("font_color", TEXT)
+	header.add_child(title)
+	var close: Button = _button("Close", false)
+	close.pressed.connect(func() -> void: _downloads_modal.visible = false)
+	header.add_child(close)
+	_download_summary = Label.new()
+	_download_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_download_summary.add_theme_color_override("font_color", MUTED)
+	column.add_child(_download_summary)
+	var scroll: = ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	column.add_child(scroll)
+	_downloads_list = VBoxContainer.new()
+	_downloads_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_downloads_list.add_theme_constant_override("separation", 8)
+	scroll.add_child(_downloads_list)
+	var note: = Label.new()
+	note.text = ("Downloads continue while this screen is closed and during offline play. "
+		+ "New queued downloads wait while you are in online multiplayer.")
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_color_override("font_color", MUTED)
+	column.add_child(note)
+
+	_uninstall_dialog = ConfirmationDialog.new()
+	_uninstall_dialog.title = "Uninstall community pack?"
+	_uninstall_dialog.confirmed.connect(_confirm_uninstall)
+	add_child(_uninstall_dialog)
 
 
 func _load_page(force: bool = false) -> void:
@@ -386,7 +461,7 @@ func _render_list() -> void:
 
 
 func _select_record(record: Dictionary) -> void:
-	if _installer.is_busy() or _catalog.is_busy(): return
+	if _catalog.is_busy(): return
 	_loading_detail = true
 	_selected = record.duplicate(true)
 	_detail.clear()
@@ -445,73 +520,210 @@ func _selected_file() -> Dictionary:
 
 
 func _refresh_install_action() -> void:
-	var installed: String = INSTALLER_SCRIPT.installed_path(int(_detail.get("id", 0)))
+	if not is_instance_valid(_downloads): return
+	var mod_id: int = int(_detail.get("id", 0))
+	var installed: String = INSTALLER_SCRIPT.installed_path(mod_id)
+	_uninstall_button.visible = not installed.is_empty()
+	_uninstall_button.disabled = Net.is_online() or _mod_has_active_job(mod_id)
 	if not installed.is_empty():
 		_install_button.text = "Installed"
 		_install_button.disabled = true
+		_install_progress.visible = false
 		_install_status.text = "Installed in %s" % installed
+		if _mod_has_active_job(mod_id):
+			_install_status.text += "\nA download for this submission is still active."
 		_install_status.add_theme_color_override("font_color", SUCCESS)
 		return
 	var file: Dictionary = _selected_file()
 	if file.is_empty():
 		_install_button.text = "Install pack"
 		_install_button.disabled = true
+		_install_progress.visible = false
 		_install_status.text = "This submission has no downloadable files."
 		return
+	var job: Dictionary = _downloads.job_for(mod_id, int(file.get("id", 0)))
+	var state: String = str(job.get("state", ""))
+	if state in ["queued", "downloading", "verifying", "installing"]:
+		_install_button.text = "View downloads"
+		_install_button.disabled = false
+		_install_progress.visible = true
+		_install_progress.max_value = maxi(1, int(job.get("total", file.get("size", 0))))
+		_install_progress.value = clampi(
+			int(job.get("received", 0)), 0, int(_install_progress.max_value))
+		var status: String = str(job.get("status", "Queued"))
+		if state == "queued" and Net.is_online():
+			status = "Queued — waiting until you leave online multiplayer."
+		_install_status.text = status
+		_install_status.add_theme_color_override("font_color", MUTED)
+		return
+	if state in ["failed", "canceled"]:
+		_install_progress.visible = false
+		_install_button.text = "Retry download"
+		_install_button.disabled = false
+		_install_status.text = str(job.get(
+			"error", "Canceled" if state == "canceled" else "Download failed"))
+		if _install_status.text.is_empty(): _install_status.text = "Canceled"
+		_install_status.add_theme_color_override("font_color", DANGER if state == "failed" else MUTED)
+		return
 	var problem: String = INSTALLER_SCRIPT.installability_problem(file)
-	_install_button.text = "Install pack"
-	_install_button.disabled = not problem.is_empty() or Net.is_online()
+	_install_progress.visible = false
+	_install_button.text = "Add to download queue"
+	_install_button.disabled = not problem.is_empty()
 	if Net.is_online():
-		_install_status.text = "Leave the online lobby before installing packs so its pack list stays consistent."
+		_install_status.text = "This will wait in the queue until you leave online multiplayer."
 		_install_status.add_theme_color_override("font_color", WARNING)
 	elif not problem.is_empty():
 		_install_status.text = problem
 		_install_status.add_theme_color_override("font_color", DANGER)
 	else:
-		_install_status.text = "Ready to download, verify and install into packs_voice."
+		_install_status.text = "Ready to queue. Downloads continue during offline play."
 		_install_status.add_theme_color_override("font_color", MUTED)
 
 
 func _on_install_pressed() -> void:
 	var file: Dictionary = _selected_file()
-	if file.is_empty() or _detail.is_empty() or Net.is_online(): return
-	_install_button.disabled = true
-	_file_picker.disabled = true
-	_install_progress.visible = true
-	_install_progress.min_value = 0
-	_install_progress.max_value = maxi(1, int(file.get("size", 0)))
-	_install_progress.value = 0
-	_installer.install(_detail, file)
+	if file.is_empty() or _detail.is_empty(): return
+	var existing: Dictionary = _downloads.job_for(
+		int(_detail.get("id", 0)), int(file.get("id", 0)))
+	if str(existing.get("state", "")) in ["queued", "downloading", "verifying", "installing"]:
+		_show_downloads()
+		return
+	_downloads.enqueue(_detail, file)
+	_refresh_install_action()
 
 
-func _on_install_progress(received: int, total: int, status: String) -> void:
-	_install_progress.visible = true
-	_install_progress.max_value = maxi(1, total)
-	_install_progress.value = clampi(received, 0, maxi(1, total))
-	_install_status.text = status
-	_install_status.add_theme_color_override("font_color", MUTED)
+func _on_downloads_changed() -> void:
+	if not is_instance_valid(_downloads_button): return
+	var active: int = _downloads.active_count()
+	_downloads_button.text = "Downloads (%d)" % active if active > 0 else "Downloads"
+	if is_instance_valid(_downloads_modal) and _downloads_modal.visible: _render_downloads()
+	if not _update_selected_active_download(): _refresh_install_action()
 
 
-func _on_install_finished(result: Dictionary) -> void:
-	_install_progress.visible = false
-	_file_picker.disabled = false
-	_install_button.text = "Installed"
-	_install_button.disabled = true
-	var text: String = "Already installed" if bool(result.get("already_installed", false)) else "Installed"
-	_install_status.text = "%s in %s" % [text, str(result.get("path", "packs_voice"))]
-	if result.has("warning"): _install_status.text += "\n" + str(result["warning"])
-	_install_status.add_theme_color_override("font_color", SUCCESS)
-
-
-func _on_install_failed(message: String) -> void:
-	_install_progress.visible = false
-	_file_picker.disabled = false
-	_install_status.text = message
-	_install_status.add_theme_color_override("font_color", DANGER)
+func _update_selected_active_download() -> bool:
 	var file: Dictionary = _selected_file()
-	_install_button.text = "Retry install"
-	_install_button.disabled = (file.is_empty() or Net.is_online()
-		or not INSTALLER_SCRIPT.installability_problem(file).is_empty())
+	if file.is_empty() or _detail.is_empty(): return false
+	var job: Dictionary = _downloads.job_for(
+		int(_detail.get("id", 0)), int(file.get("id", 0)))
+	var state: String = str(job.get("state", ""))
+	if state not in ["queued", "downloading", "verifying", "installing"]: return false
+	_install_button.text = "View downloads"
+	_install_button.disabled = false
+	_install_progress.visible = true
+	_install_progress.max_value = maxi(1, int(job.get("total", file.get("size", 0))))
+	_install_progress.value = clampi(int(job.get("received", 0)), 0, int(_install_progress.max_value))
+	_install_status.text = str(job.get("status", "Queued"))
+	if state == "queued" and Net.is_online():
+		_install_status.text = "Queued — waiting until you leave online multiplayer."
+	_install_status.add_theme_color_override("font_color", MUTED)
+	return true
+
+
+func _show_downloads() -> void:
+	_render_downloads()
+	_downloads_modal.visible = true
+
+
+func _render_downloads() -> void:
+	if not is_instance_valid(_downloads_list) or not is_instance_valid(_downloads): return
+	for child: Node in _downloads_list.get_children():
+		_downloads_list.remove_child(child)
+		child.queue_free()
+	var jobs: Array[Dictionary] = _downloads.get_jobs()
+	var active: int = _downloads.active_count()
+	_download_summary.text = (
+		"%d active or queued. Downloads run one at a time to avoid saturating the connection." % active)
+	if jobs.is_empty():
+		var empty: = Label.new()
+		empty.text = "No downloads in this session."
+		empty.add_theme_color_override("font_color", MUTED)
+		_downloads_list.add_child(empty)
+		return
+	for job: Dictionary in jobs:
+		var card: = PanelContainer.new()
+		card.add_theme_stylebox_override("panel", _box(SURFACE_2, 8, BORDER, 1))
+		_downloads_list.add_child(card)
+		var row: = HBoxContainer.new()
+		row.add_theme_constant_override("separation", 12)
+		card.add_child(row)
+		var info: = VBoxContainer.new()
+		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(info)
+		var mod: Dictionary = job.get("mod", {})
+		var file: Dictionary = job.get("file", {})
+		var title: = Label.new()
+		title.text = "%s  —  %s" % [str(mod.get("name", "Dub pack")), str(file.get("name", "ZIP"))]
+		title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		title.add_theme_color_override("font_color", TEXT)
+		info.add_child(title)
+		var state: String = str(job.get("state", "queued"))
+		var status: = Label.new()
+		status.text = str(job.get("status", state.capitalize()))
+		if state == "queued" and Net.is_online():
+			status.text = "Queued — waiting until online multiplayer closes"
+		if state == "failed" and not str(job.get("error", "")).is_empty():
+			status.text += " — " + str(job["error"])
+		status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		status.add_theme_color_override(
+			"font_color", DANGER if state == "failed" else SUCCESS if state == "finished" else MUTED)
+		info.add_child(status)
+		if state in ["queued", "downloading", "verifying", "installing"]:
+			var progress: = ProgressBar.new()
+			progress.show_percentage = state != "queued"
+			progress.max_value = maxi(1, int(job.get("total", 0)))
+			progress.value = clampi(int(job.get("received", 0)), 0, int(progress.max_value))
+			info.add_child(progress)
+		var actions: = VBoxContainer.new()
+		row.add_child(actions)
+		var id: String = str(job.get("id", ""))
+		if state in ["queued", "downloading"]:
+			var cancel: Button = _button("Cancel", false)
+			cancel.pressed.connect(_downloads.cancel.bind(id))
+			actions.add_child(cancel)
+		elif state in ["failed", "canceled"]:
+			var retry: Button = _button("Retry", true)
+			retry.pressed.connect(_downloads.retry.bind(id))
+			actions.add_child(retry)
+			var dismiss: Button = _button("Dismiss", false)
+			dismiss.pressed.connect(_downloads.dismiss.bind(id))
+			actions.add_child(dismiss)
+		elif state == "finished":
+			var dismiss: Button = _button("Dismiss", false)
+			dismiss.pressed.connect(_downloads.dismiss.bind(id))
+			actions.add_child(dismiss)
+
+
+func _mod_has_active_job(mod_id: int) -> bool:
+	if mod_id <= 0: return false
+	for job: Dictionary in _downloads.get_jobs():
+		var mod: Dictionary = job.get("mod", {})
+		if (int(mod.get("id", 0)) == mod_id
+			and str(job.get("state", "")) in ["queued", "downloading", "verifying", "installing"]):
+			return true
+	return false
+
+
+func _on_uninstall_pressed() -> void:
+	var mod_id: int = int(_detail.get("id", 0))
+	if mod_id <= 0 or Net.is_online() or _mod_has_active_job(mod_id): return
+	_uninstall_dialog.dialog_text = ("Remove '%s' and all files this installer placed in its pack folder?\n\n"
+		+ "Manually installed packs are never removed by this button.") % str(_detail.get("name", "Dub pack"))
+	_uninstall_dialog.popup_centered(Vector2i(560, 190))
+
+
+func _confirm_uninstall() -> void:
+	var mod_id: int = int(_detail.get("id", 0))
+	if mod_id <= 0 or Net.is_online() or _mod_has_active_job(mod_id): return
+	var result: Dictionary = INSTALLER_SCRIPT.uninstall(mod_id)
+	if result.has("error"):
+		_install_status.text = str(result["error"])
+		_install_status.add_theme_color_override("font_color", DANGER)
+		return
+	_downloads.dismiss_for_mod(mod_id)
+	Net.community_pack_library_changed()
+	_refresh_install_action()
+	_install_status.text = "Uninstalled %s." % str(_detail.get("name", "community pack"))
+	_install_status.add_theme_color_override("font_color", SUCCESS)
 
 
 func _on_request_failed(message: String) -> void:
