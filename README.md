@@ -168,11 +168,14 @@ The lobby lists anything it spots as different, and the normal game show would
 rather flat out refuse to start than let you desync halfway through a round.
 
 Dub mode handles this differently. When the host presses Play on a dub pack,
-anyone without that exact pack is shown its name and size and chooses whether to
-download it from the host. Declining does not kick them or install anything; the
-Download button remains available if they change their mind. The host sees who
-already has it, who declined, and each download's progress. **Begin dub** stays
-disabled until every connected player has verified the pack.
+they first see its size and an **experimental sharing** warning. Nothing is
+offered until the host explicitly enables it. Anyone without that exact pack is
+then shown its name, size and the same warning, and chooses whether to download
+it from the host. Large transfers may be slow or cause disconnects on weaker
+connections. Declining does not kick them or install anything; the Download
+button remains available if they change their mind. The host sees who already
+has it, who declined, and each download's progress. **Begin dub** stays disabled
+until every connected player has verified the pack.
 
 Received packs live in `%APPDATA%\YeahMaybe\ChoicerVoicer\multiplayer_pack_cache`
 and do not appear in the normal pack selector. A completed pack is reused by its

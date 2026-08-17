@@ -48,6 +48,7 @@ var _transfer_tokens: Dictionary = {}
 var _offer_serial: int = 0
 var _prepare_generation: int = 0
 var _host_decision: int = 0
+var _host_sharing_confirmed: bool = false
 
 var _client_state: String = "idle"
 var _client_error: String = ""
@@ -106,6 +107,7 @@ func reset() -> void:
 	_host_acks.clear()
 	_transfer_tokens.clear()
 	_host_decision = -1
+	_host_sharing_confirmed = false
 	_client_state = "idle"
 	_client_error = ""
 	_client_received = 0
@@ -144,6 +146,7 @@ func prepare_dub(folder: String, clip_paths: PackedStringArray) -> Dictionary:
 
 	_host_folder = folder.trim_suffix("/").replace("\\", "/")
 	_host_decision = 0
+	_host_sharing_confirmed = false
 	_client_error = ""
 	_show_scanning()
 
@@ -197,8 +200,6 @@ func prepare_dub(folder: String, clip_paths: PackedStringArray) -> Dictionary:
 	_net.log_net("offering dub pack '%s' (%s, %d files)" % [
 		_active_offer["name"], _format_bytes(int(_active_offer["total_bytes"])),
 		Array(_active_offer["files"]).size()])
-	for peer: int in _net.players:
-		if peer != 1: _send_offer_manifest.call_deferred(peer, str(_active_offer["id"]))
 	_queue_render()
 
 	while _host_decision == 0:
@@ -206,6 +207,7 @@ func prepare_dub(folder: String, clip_paths: PackedStringArray) -> Dictionary:
 		if not _net.is_online() or not _net.is_host():
 			reset()
 			return {}
+		if _test_auto_begin and not _host_sharing_confirmed: _begin_host_sharing()
 		if _test_auto_begin and _all_players_ready(): _host_decision = 1
 		await get_tree().process_frame
 
@@ -463,7 +465,8 @@ func _rpc_pack_offer_end(offer_id: String, clips: Array) -> void:
 
 
 func _send_offer_manifest(peer: int, offer_id: String) -> void:
-	if (_net == null or not _net.is_host() or not _net.players.has(peer)
+	if (_net == null or not _net.is_host() or not _host_sharing_confirmed
+		or not _net.players.has(peer)
 		or offer_id != str(_active_offer.get("id", ""))): return
 	var files: Array = _active_offer.get("files", [])
 	var summary: Dictionary = {
@@ -907,7 +910,8 @@ func _on_roster_changed() -> void:
 		current[peer] = true
 		if peer != 1 and not _peer_states.has(peer):
 			_peer_states[peer] = _state_record("checking", 0, "")
-			_send_offer_later.call_deferred(peer, str(_active_offer["id"]))
+			if _host_sharing_confirmed:
+				_send_offer_later.call_deferred(peer, str(_active_offer["id"]))
 	for peer_value: Variant in _peer_states.keys():
 		var peer: int = int(peer_value)
 		if not current.has(peer):
@@ -920,6 +924,7 @@ func _on_roster_changed() -> void:
 func _send_offer_later(peer: int, offer_id: String) -> void:
 	await get_tree().create_timer(0.5).timeout
 	if (_net != null and _net.is_host() and _net.players.has(peer)
+		and _host_sharing_confirmed
 		and offer_id == str(_active_offer.get("id", ""))):
 		_send_offer_manifest(peer, offer_id)
 
@@ -1025,8 +1030,9 @@ func _build_ui() -> void:
 
 func _show_scanning() -> void:
 	_panel.visible = true
-	_title.text = "PREPARING DUB PACK"
-	_detail.text = "Checking the selected pack and calculating its content hash..."
+	_title.text = "EXPERIMENTAL DUB PACK SHARING"
+	_detail.text = ("Preparing the selected pack. Sharing is experimental: large transfers may be slow "
+		+ "or cause disconnects on weaker connections. Nothing will be offered until you confirm.")
 	_roster.text = ""
 	_progress.visible = false
 	_primary.visible = false
@@ -1065,34 +1071,42 @@ func _render() -> void:
 	_panel.visible = true
 	var total: int = int(_active_offer.get("total_bytes", 0))
 	if _net != null and _net.is_host():
-		_title.text = "SHARE DUB PACK"
-		_detail.text = "%s — %s. Everyone must have and verify this pack before the dub can begin." % [
+		_title.text = "EXPERIMENTAL DUB PACK SHARING"
+		_detail.text = ("%s — %s. Host-to-player pack sharing is experimental. Large transfers may "
+			+ "be slow or cause disconnects on weaker connections.") % [
 			_active_offer.get("name", "Dub pack"), _format_bytes(total)]
 		var ignored: int = int(_active_offer.get("ignored", 0))
 		if ignored > 0:
 			_detail.text += " %d generated or unsupported file(s) will not be copied." % ignored
-		var lines: PackedStringArray = []
-		for slot: int in _net.slot_count():
-			var peer: int = _net.peer_for_slot(slot)
-			var record: Dictionary = _dictionary(_peer_states.get(peer, {}))
-			var state: String = str(record.get("state", "checking"))
-			var status: String = _state_label(state)
-			if state == "downloading":
-				status += " %d%%" % _percent(int(record.get("received", 0)), total)
-			if state == "failed" and not str(record.get("error", "")).is_empty():
-				status += " — " + str(record["error"])
-			lines.append("%s: %s" % [_net.player_name_for_slot(slot), status])
-		_roster.text = "\n".join(lines)
+		if not _host_sharing_confirmed:
+			_roster.text = ("No pack offer has been sent. Enabling sharing lets each player choose "
+				+ "whether to download it; the dub will remain blocked until everyone is ready.")
+		else:
+			_detail.text += " Everyone must have and verify this pack before the dub can begin."
+			var lines: PackedStringArray = []
+			for slot: int in _net.slot_count():
+				var peer: int = _net.peer_for_slot(slot)
+				var record: Dictionary = _dictionary(_peer_states.get(peer, {}))
+				var state: String = str(record.get("state", "checking"))
+				var status: String = _state_label(state)
+				if state == "downloading":
+					status += " %d%%" % _percent(int(record.get("received", 0)), total)
+				if state == "failed" and not str(record.get("error", "")).is_empty():
+					status += " — " + str(record["error"])
+				lines.append("%s: %s" % [_net.player_name_for_slot(slot), status])
+			_roster.text = "\n".join(lines)
 		_progress.visible = false
 		_primary.visible = true
-		_primary.text = "Begin dub"
-		_primary.disabled = not _all_players_ready()
+		_primary.text = "Begin dub" if _host_sharing_confirmed else "Enable experimental sharing"
+		_primary.disabled = _host_sharing_confirmed and not _all_players_ready()
 		_secondary.visible = true
 		_secondary.text = "Cancel"
 		_secondary.disabled = false
 	else:
-		_title.text = "HOST SELECTED A DUB PACK"
-		_detail.text = "%s — %s" % [_active_offer.get("name", "Dub pack"), _format_bytes(total)]
+		_title.text = "EXPERIMENTAL PACK DOWNLOAD"
+		_detail.text = ("%s — %s. Host-to-player sharing is experimental and may be slow or "
+			+ "disconnect on unstable connections.") % [
+			_active_offer.get("name", "Dub pack"), _format_bytes(total)]
 		_roster.text = _client_status_text()
 		_progress.visible = _client_state in ["downloading", "verifying", "ready"]
 		_progress.min_value = 0
@@ -1136,9 +1150,19 @@ func _state_label(state: String) -> String:
 
 func _on_primary() -> void:
 	if _net != null and _net.is_host():
-		if _all_players_ready(): _host_decision = 1
+		if not _host_sharing_confirmed: _begin_host_sharing()
+		elif _all_players_ready(): _host_decision = 1
 	else:
 		accept_download()
+
+
+func _begin_host_sharing() -> void:
+	if (_net == null or not _net.is_host() or _active_offer.is_empty()
+		or _host_sharing_confirmed): return
+	_host_sharing_confirmed = true
+	for peer: int in _net.players:
+		if peer != 1: _send_offer_manifest.call_deferred(peer, str(_active_offer["id"]))
+	_queue_render()
 
 
 func _on_secondary() -> void:
