@@ -93,8 +93,12 @@ func install(mod: Dictionary, file: Dictionary) -> void:
 
 static func installability_problem(file: Dictionary) -> String:
 	var name: String = str(file.get("name", ""))
-	if name.get_extension().to_lower() != "zip":
-		return "This file is not a ZIP. RAR and 7z support is not available yet."
+	var extension: String = name.get_extension().to_lower()
+	if extension == "rar":
+		return ("This is a RAR archive. Safe RAR extraction is not bundled yet; "
+			+ "choose a ZIP file from this submission if one is available.")
+	if extension != "zip":
+		return "This file is not a ZIP. Only ZIP archives are supported right now."
 	var size: int = int(file.get("size", 0))
 	if size <= 0: return "GameBanana did not report a valid file size."
 	if size > MAX_ARCHIVE_BYTES: return "This archive is larger than the 1 GB safety limit."

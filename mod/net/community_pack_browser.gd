@@ -297,6 +297,12 @@ func _build_ui() -> void:
 	file_label.add_theme_color_override("font_color", MUTED)
 	detail.add_child(file_label)
 	_file_picker = OptionButton.new()
+	# GameBanana filenames are untrusted layout input too. OptionButton normally
+	# makes its minimum width equal to its longest item, so one essay-length name
+	# can push the entire split view beyond the viewport.
+	_file_picker.fit_to_longest_item = false
+	_file_picker.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_file_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_file_picker.disabled = true
 	_file_picker.item_selected.connect(func(_index: int) -> void: _refresh_install_action())
 	detail.add_child(_file_picker)
@@ -517,13 +523,21 @@ func _render_list() -> void:
 		var row: Button = Button.new()
 		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		row.custom_minimum_size.y = 68
+		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.clip_text = true
 		row.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		var category: String = str(record.get("subcategory", ""))
 		if category.is_empty(): category = str(record.get("category", "Dub Mode"))
 		if category.is_empty(): category = "Dub Mode"
 		var warning: String = "  •  CONTENT-RATED" if bool(record.get("content_rated", false)) else ""
-		row.text = "%s\nby %s  •  %s%s" % [record["name"], record["author"], category, warning]
-		row.tooltip_text = str(record.get("name", ""))
+		row.text = "%s\nby %s  •  %s%s" % [
+			_compact_text(str(record["name"]), 64),
+			_compact_text(str(record["author"]), 36),
+			_compact_text(category, 28),
+			warning,
+		]
+		row.tooltip_text = "%s\nby %s" % [
+			str(record.get("name", "")), str(record.get("author", "Unknown creator"))]
 		row.add_theme_font_size_override("font_size", 15)
 		row.add_theme_color_override("font_color", TEXT)
 		row.add_theme_color_override("font_hover_color", TEXT)
@@ -584,8 +598,12 @@ func _on_detail_loaded(detail: Dictionary) -> void:
 	for file_value: Variant in Array(detail.get("files", [])):
 		if not file_value is Dictionary: continue
 		var file: Dictionary = file_value
-		_file_picker.add_item("%s  —  %s" % [file["name"], _format_bytes(int(file["size"]))])
-		_file_picker.set_item_metadata(_file_picker.item_count - 1, file)
+		var full_name: String = str(file["name"])
+		_file_picker.add_item("%s  —  %s" % [
+			_compact_text(full_name, 62), _format_bytes(int(file["size"]))])
+		var item_index: int = _file_picker.item_count - 1
+		_file_picker.set_item_metadata(item_index, file)
+		_file_picker.get_popup().set_item_tooltip(item_index, full_name)
 	_file_picker.disabled = _file_picker.item_count == 0
 	if _file_picker.item_count > 0:
 		var first_zip: int = 0
@@ -749,6 +767,8 @@ func _render_installed() -> void:
 		row.add_child(info)
 		var title: = Label.new()
 		title.text = str(pack.get("name", pack.get("folder", "Dub pack")))
+		title.clip_text = true
+		title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		title.add_theme_color_override("font_color", TEXT)
 		info.add_child(title)
@@ -767,6 +787,8 @@ func _render_installed() -> void:
 		info.add_child(meta)
 		var folder: = Label.new()
 		folder.text = "Folder: %s" % str(pack.get("folder", ""))
+		folder.clip_text = true
+		folder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		folder.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		folder.add_theme_font_size_override("font_size", 12)
 		folder.add_theme_color_override("font_color", MUTED.darkened(0.12))
@@ -825,7 +847,11 @@ func _render_downloads() -> void:
 		var file: Dictionary = job.get("file", {})
 		var title: = Label.new()
 		title.text = "%s  —  %s" % [str(mod.get("name", "Dub pack")), str(file.get("name", "ZIP"))]
+		title.clip_text = true
+		title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		title.tooltip_text = "%s — %s" % [
+			str(mod.get("name", "Dub pack")), str(file.get("name", "ZIP"))]
 		title.add_theme_color_override("font_color", TEXT)
 		info.add_child(title)
 		var state: String = str(job.get("state", "queued"))
@@ -1006,3 +1032,12 @@ static func _format_bytes(bytes: int) -> String:
 	if bytes >= 1024 * 1024: return "%.1f MB" % (float(bytes) / 1048576.0)
 	if bytes >= 1024: return "%.1f KB" % (float(bytes) / 1024.0)
 	return "%d bytes" % bytes
+
+
+static func _compact_text(value: String, limit: int) -> String:
+	if value.length() <= limit: return value
+	if limit < 8: return value.left(maxi(1, limit - 1)) + "…"
+	# Keep the tail because archive extensions and numbered variants tend to live
+	# there, while still putting most of the useful title at the front.
+	var tail: int = mini(14, limit / 4)
+	return value.left(limit - tail - 1) + "…" + value.right(tail)

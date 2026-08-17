@@ -275,10 +275,12 @@ You can uninstall it there without finding the GameBanana submission again.
 Only folders carrying this installer's matching manifest appear in the list or
 can be removed; manually installed packs remain untouched.
 
-For the first version, the installer accepts ZIP files only. Before moving
-anything into `packs_voice`, it requires GameBanana's analysis and antivirus
-checks to have passed, verifies the reported file size and MD5, checks the ZIP
-directory for traversal paths, links, encryption and expansion bombs, and
+For now, the installer accepts ZIP files only. RAR support needs a separate
+archive reader because Godot cannot inspect it itself; the browser explains this
+and prefers a ZIP automatically when a submission offers both formats. Before
+moving anything into `packs_voice`, it requires GameBanana's analysis and
+antivirus checks to have passed, verifies the reported file size and MD5, checks
+the ZIP directory for traversal paths, links, encryption and expansion bombs, and
 extracts only the media, image and metadata formats a dub pack needs. Extraction
 happens in a temporary folder beside `packs_voice`, then the completed directory
 is renamed into place in one operation. Failed installs are removed rather than
