@@ -163,6 +163,11 @@ func _build_support_footer() -> void:
 	discord.add_theme_color_override("font_color", DISCORD_COLOR)
 	discord.add_theme_color_override("font_hover_color", DISCORD_COLOR.lightened(0.3))
 	links.add_child(discord)
+	var community: = Button.new()
+	community.text = "Browse community packs"
+	community.tooltip_text = "Open the in-game GameBanana Dub Mode browser."
+	community.pressed.connect(Net.open_community_packs)
+	links.add_child(community)
 	links.add_child(_link_button("Support me on Ko-fi", KOFI_URL))
 	links.add_child(_link_button("Upvote on GameBanana", GAMEBANANA_URL))
 

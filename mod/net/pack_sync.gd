@@ -62,10 +62,13 @@ var _panel_dismissed: bool = true
 var _force_fresh_pending: bool = false
 
 var _layer: CanvasLayer
+var _modal_root: Control
 var _panel: PanelContainer
 var _title: Label
 var _detail: Label
+var _warning_box: PanelContainer
 var _warning: Label
+var _roster_box: PanelContainer
 var _roster: Label
 var _force_download_box: CheckBox
 var _progress: ProgressBar
@@ -1005,6 +1008,7 @@ func _close_download_file() -> void:
 
 
 func _hide_panel() -> void:
+	if is_instance_valid(_modal_root): _modal_root.visible = false
 	if is_instance_valid(_panel): _panel.visible = false
 
 
@@ -1022,40 +1026,76 @@ func _build_ui() -> void:
 	_layer.layer = 140
 	add_child(_layer)
 
+	_modal_root = Control.new()
+	_modal_root.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	_modal_root.position = Vector2.ZERO
+	_modal_root.size = get_viewport().get_visible_rect().size
+	get_viewport().size_changed.connect(func() -> void:
+		if is_instance_valid(_modal_root):
+			_modal_root.position = Vector2.ZERO
+			_modal_root.size = get_viewport().get_visible_rect().size)
+	_modal_root.mouse_filter = Control.MOUSE_FILTER_STOP
+	_modal_root.visible = false
+	_layer.add_child(_modal_root)
+
+	var backdrop: = ColorRect.new()
+	backdrop.color = Color(0.015, 0.025, 0.055, 0.82)
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_modal_root.add_child(backdrop)
+
+	var center: = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_modal_root.add_child(center)
+
 	_panel = PanelContainer.new()
-	_panel.anchor_left = 0.5
-	_panel.anchor_right = 0.5
-	_panel.offset_left = -380
-	_panel.offset_right = 380
-	_panel.offset_top = 48
+	_panel.custom_minimum_size = Vector2(700, 0)
+	_panel.add_theme_stylebox_override("panel", _style_box(
+		Color("111827"), 14, Color("3b4b6b"), 1, 0))
 	_panel.visible = false
-	_layer.add_child(_panel)
+	center.add_child(_panel)
 
 	var margin: = MarginContainer.new()
 	for side: String in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 18)
+		margin.add_theme_constant_override("margin_" + side, 24)
 	_panel.add_child(margin)
 
 	var column: = VBoxContainer.new()
-	column.add_theme_constant_override("separation", 8)
+	column.add_theme_constant_override("separation", 12)
 	margin.add_child(column)
 
+	var eyebrow: = Label.new()
+	eyebrow.text = "MULTIPLAYER  •  DUB MODE"
+	eyebrow.add_theme_font_size_override("font_size", 13)
+	eyebrow.add_theme_color_override("font_color", Color("61c4ff"))
+	column.add_child(eyebrow)
+
 	_title = Label.new()
-	_title.add_theme_font_size_override("font_size", 24)
+	_title.add_theme_font_size_override("font_size", 28)
+	_title.add_theme_color_override("font_color", Color("f3f5fb"))
 	column.add_child(_title)
 
 	_detail = Label.new()
 	_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_detail.add_theme_color_override("font_color", Color("c5ccda"))
 	column.add_child(_detail)
 
+	_warning_box = PanelContainer.new()
+	_warning_box.add_theme_stylebox_override("panel", _style_box(
+		Color("352d19"), 8, Color("8c7130"), 1, 12))
+	column.add_child(_warning_box)
 	_warning = Label.new()
 	_warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_warning.add_theme_color_override("font_color", Color("ffcc44"))
-	column.add_child(_warning)
+	_warning.add_theme_color_override("font_color", Color("ffd36a"))
+	_warning_box.add_child(_warning)
 
+	_roster_box = PanelContainer.new()
+	_roster_box.add_theme_stylebox_override("panel", _style_box(
+		Color("192235"), 8, Color("33425f"), 1, 12))
+	column.add_child(_roster_box)
 	_roster = Label.new()
 	_roster.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	column.add_child(_roster)
+	_roster.add_theme_color_override("font_color", Color("edf1f8"))
+	_roster_box.add_child(_roster)
 
 	_force_download_box = CheckBox.new()
 	_force_download_box.text = "Force fresh download for testing"
@@ -1068,27 +1108,70 @@ func _build_ui() -> void:
 	column.add_child(_progress)
 
 	var buttons: = HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_END
 	buttons.add_theme_constant_override("separation", 8)
 	column.add_child(buttons)
 
 	_primary = Button.new()
+	_style_button(_primary, true)
 	_primary.pressed.connect(_on_primary)
 	buttons.add_child(_primary)
 
 	_secondary = Button.new()
+	_style_button(_secondary, false)
 	_secondary.pressed.connect(_on_secondary)
 	buttons.add_child(_secondary)
 
 
+func _style_button(button: Button, primary: bool) -> void:
+	var accent: Color = Color("61c4ff")
+	button.custom_minimum_size = Vector2(120, 40)
+	button.add_theme_font_size_override("font_size", 14)
+	button.add_theme_color_override("font_color", Color("071019") if primary else Color("f3f5fb"))
+	button.add_theme_color_override("font_hover_color", Color("071019") if primary else Color("f3f5fb"))
+	button.add_theme_stylebox_override("normal", _style_box(
+		accent if primary else Color("202b42"), 7, accent if primary else Color("3b4b6b"), 1, 10))
+	button.add_theme_stylebox_override("hover", _style_box(
+		accent.lightened(0.15) if primary else Color("293650"), 7, accent, 1, 10))
+	button.add_theme_stylebox_override("pressed", _style_box(
+		accent.darkened(0.1) if primary else Color("1b263b"), 7, accent, 2, 10))
+
+
+func _style_box(color: Color, radius: int, border: Color, width: int, margin_size: int) -> StyleBoxFlat:
+	var box: = StyleBoxFlat.new()
+	box.bg_color = color
+	box.corner_radius_top_left = radius
+	box.corner_radius_top_right = radius
+	box.corner_radius_bottom_left = radius
+	box.corner_radius_bottom_right = radius
+	box.border_width_left = width
+	box.border_width_right = width
+	box.border_width_top = width
+	box.border_width_bottom = width
+	box.border_color = border
+	box.content_margin_left = margin_size
+	box.content_margin_right = margin_size
+	box.content_margin_top = margin_size
+	box.content_margin_bottom = margin_size
+	return box
+
+
+func _show_panel() -> void:
+	_modal_root.visible = true
+	_panel.visible = true
+
+
 func _show_scanning() -> void:
 	_panel_dismissed = false
-	_panel.visible = true
+	_show_panel()
 	_title.text = "DUB PACK SHARING"
 	_detail.text = "Checking the selected pack and calculating its content hash..."
 	_warning.visible = true
+	_warning_box.visible = true
 	_warning.text = ("EXPERIMENTAL: Large transfers may be slow or disconnect weaker connections. "
 		+ "Only share packs from sources you trust.")
 	_roster.text = ""
+	_roster_box.visible = false
 	_force_download_box.button_pressed = false
 	_force_download_box.visible = false
 	_progress.visible = false
@@ -1101,11 +1184,13 @@ func _show_scanning() -> void:
 func _show_host_error(reason: String) -> void:
 	_host_decision = -1
 	_panel_dismissed = false
-	_panel.visible = true
+	_show_panel()
 	_title.text = "PACK CANNOT BE SHARED"
 	_detail.text = reason
 	_warning.visible = false
+	_warning_box.visible = false
 	_roster.text = ""
+	_roster_box.visible = false
 	_force_download_box.visible = false
 	_progress.visible = false
 	_primary.visible = false
@@ -1133,14 +1218,17 @@ func _development_controls_enabled() -> bool:
 func _render() -> void:
 	if not is_instance_valid(_panel) or _active_offer.is_empty(): return
 	if _panel_dismissed:
+		_modal_root.visible = false
 		_panel.visible = false
 		return
-	_panel.visible = true
+	_show_panel()
+	_roster_box.visible = true
 	var total: int = int(_active_offer.get("total_bytes", 0))
 	if _net != null and _net.is_host():
 		_title.text = "DUB PACK SHARING"
 		_detail.text = "%s — %s" % [_active_offer.get("name", "Dub pack"), _format_bytes(total)]
 		_warning.visible = true
+		_warning_box.visible = true
 		_warning.text = ("EXPERIMENTAL: Large transfers may be slow or disconnect weaker connections. "
 			+ "Only share packs from sources you trust.")
 		var ignored: int = int(_active_offer.get("ignored", 0))
@@ -1176,6 +1264,7 @@ func _render() -> void:
 		_title.text = "DUB PACK DOWNLOAD"
 		_detail.text = "%s — %s" % [_active_offer.get("name", "Dub pack"), _format_bytes(total)]
 		_warning.visible = true
+		_warning_box.visible = true
 		_warning.text = ("EXPERIMENTAL: Transfers may be slow or disconnect unstable connections. "
 			+ "Only download packs from a host you trust.")
 		_roster.text = _client_status_text()

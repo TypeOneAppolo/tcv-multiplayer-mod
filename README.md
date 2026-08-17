@@ -43,6 +43,7 @@ you're dubbing and then watch the finished thing together.
   - [Command line options](#command-line-options)
 - [Setting up a game](#setting-up-a-game)
 - [Playing](#playing)
+- [Community packs (experimental)](#community-packs-experimental)
 - [Is this a virus](#is-this-a-virus)
 - [Troubleshooting](#troubleshooting)
 - [Why you cant just drop files in](#why-you-cant-just-drop-files-in)
@@ -240,6 +241,38 @@ note while it does. **Stop** goes out to everyone the same way.
 
 When the pack's finished you all get put back in the lobby and the host can pick
 another one. No need to restart anything.
+
+## community packs (experimental)
+
+The mod now has a native **Community Packs** screen for Dub Mode submissions on
+GameBanana. Open it from **Browse community packs** in the online screen. It also
+adds a **COMMUNITY PACKS** button to the game's Extras screen when that screen's
+layout can be identified safely. This is an in-game catalog, not an embedded web
+page: it fetches GameBanana's public JSON, the selected preview image and, only
+after you press Install, the selected archive.
+
+Installation is deliberately available only while you are out of an online
+lobby. Pick a submission, choose one of its files and press **Install pack**. A
+successful install goes into the game's normal `packs_voice` folder, so it is
+available to the game and to host pack sharing on the next lobby.
+
+For the first version, the installer accepts ZIP files only. Before moving
+anything into `packs_voice`, it requires GameBanana's analysis and antivirus
+checks to have passed, verifies the reported file size and MD5, checks the ZIP
+directory for traversal paths, links, encryption and expansion bombs, and
+extracts only the media, image and metadata formats a dub pack needs. Extraction
+happens in a temporary folder beside `packs_voice`, then the completed directory
+is renamed into place in one operation. Failed installs are removed rather than
+leaving half a pack behind.
+
+Those checks reduce the attack surface; they do not make arbitrary community
+media trustworthy. A malicious file could still target a bug in a media decoder.
+Only install packs from creators you trust. Content-rated submissions are hidden
+unless you explicitly enable them.
+
+There is no in-game update or uninstall flow yet. Delete an installed pack from
+`packs_voice` the same way you would any manually downloaded pack. RAR and 7z
+archives still need to be installed manually.
 
 ## is this a virus
 
@@ -590,6 +623,9 @@ What's in `mod/`:
 ```
 mod/net/net_manager.gd            all the netcode, one autoload
 mod/net/pack_sync.gd              consent, cache and host-to-client dub packs
+mod/net/gamebanana_client.gd      GameBanana catalog and response normalization
+mod/net/community_pack_browser.gd native community catalog screen
+mod/net/community_pack_installer.gd staged, validated ZIP installation
 mod/net/lobby.gd                  the lobby screen, built in code
 mod/net/dub_character_picker.gd   the casting screen, built in code
 mod/net/_selftest.gd              compiles every script in the project
@@ -652,6 +688,11 @@ against a clean decompile with the node path fix applied.
 
 - The lobby button is drawn over the menu by the mod rather than being a real
   menu entry, so it doesn't match the game's own styling.
+- The Community Packs button is inserted into Extras at runtime because the
+  purchased game's scene is not stored in this repository. The online-screen
+  link is the fallback if a future game build changes that menu layout.
+- The community installer supports ZIP archives only and has no update or
+  uninstall screen yet.
 - Windows 0.5.1 and 0.5.2 dev-2. Anything else fails with a clear error when it
   goes to patch it.
 - Everyone needs the same build. The mod checks and kicks you out with a message

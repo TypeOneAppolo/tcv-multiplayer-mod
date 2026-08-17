@@ -697,7 +697,7 @@ def apply_mod(work: Path) -> None:
     say("mod", f"repaired {repair_node_paths(work)} decompiler node-path artifacts")
 
     shutil.copytree(MOD / "net", work / "net", dirs_exist_ok=True)
-    say("mod", "added multiplayer networking, lobby, dub casting and pack sync scripts")
+    say("mod", "added multiplayer, pack sharing and community pack browser scripts")
 
     count = 0
     for patch in patch_set_for(version):

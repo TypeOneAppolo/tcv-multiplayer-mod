@@ -1385,6 +1385,9 @@ const ENTRY_INSET: Vector2 = Vector2(24, 20)
 
 var _entry_layer: CanvasLayer
 var _entry_button: Button
+var _community_layer: CanvasLayer
+var _community_browser: Control
+var _extras_button: Button
 
 
 func _build_the_way_in() -> void:
@@ -1414,6 +1417,7 @@ func _build_the_way_in() -> void:
 
 func _place_entry_button() -> void:
 	if not is_instance_valid(_entry_button): return
+	_try_attach_extras_button()
 	_entry_button.visible = can_open_lobby()
 	if not _entry_button.visible: return
 	_entry_button.size = _entry_button.get_combined_minimum_size()
@@ -1442,6 +1446,69 @@ func open_lobby() -> void:
 	if not can_open_lobby(): return
 	log_net("opening the lobby")
 	M.world.CreateLobby()
+
+
+func open_community_packs() -> void:
+	if is_instance_valid(_community_browser): return
+	log_net("opening the community pack browser")
+	_community_layer = CanvasLayer.new()
+	_community_layer.layer = 192
+	add_child(_community_layer)
+	_community_browser = preload("res://net/community_pack_browser.gd").new()
+	_community_browser.closed.connect(_close_community_packs)
+	_community_layer.add_child(_community_browser)
+
+
+func _close_community_packs() -> void:
+	if is_instance_valid(_community_layer): _community_layer.queue_free()
+	_community_browser = null
+	_community_layer = null
+
+
+# The purchased game's source is intentionally not kept in this repository, so
+# there is no versioned Extras patch to anchor this button to yet. Both supported
+# builds do name the Extras scene, though. Insert into its largest direct button
+# container when it is present and fail closed if the layout is unfamiliar.
+# The lobby link below remains the reliable fallback until this has been checked
+# against retained 0.5.1 and 0.5.2 decompiles.
+func _try_attach_extras_button() -> void:
+	if is_instance_valid(_extras_button): return
+	if not get_tree().get_root().has_node("World"): return
+	var capsule: Node = M.world.primary_capsule
+	if capsule == null: return
+	var extras_root: Node
+	var stack: Array[Node] = []
+	for child: Node in capsule.get_children(): stack.append(child)
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		var clue: String = (node.scene_file_path + " " + node.name).to_lower()
+		if clue.contains("extra"):
+			extras_root = node
+			break
+		for child: Node in node.get_children(): stack.append(child)
+	if extras_root == null: return
+
+	var best: Container
+	var best_buttons: int = 1
+	stack.clear()
+	stack.append(extras_root)
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is Container:
+			var count: int = 0
+			for child: Node in node.get_children():
+				if child is Button: count += 1
+			if count > best_buttons:
+				best = node
+				best_buttons = count
+		for child: Node in node.get_children(): stack.append(child)
+	if best == null: return
+	_extras_button = Button.new()
+	_extras_button.text = "COMMUNITY PACKS"
+	_extras_button.tooltip_text = "Browse and safely install community Dub Mode packs."
+	_extras_button.focus_mode = Control.FOCUS_NONE
+	_extras_button.pressed.connect(open_community_packs)
+	best.add_child(_extras_button)
 
 
 # on Net rather than world.gd: this is in the tree from startup, and _input runs
