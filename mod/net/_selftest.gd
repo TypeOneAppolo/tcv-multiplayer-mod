@@ -21,9 +21,9 @@ func _ready() -> void:
 				failures.append(p)
 
 	print("SELFTEST | compiled %d scripts" % total)
+	_run_community_pack_tests(failures)
 	for f: String in failures:
 		print("SELFTEST FAIL | %s" % f)
-	_run_community_pack_tests(failures)
 	print("SELFTEST | %d failure(s)" % failures.size())
 	get_tree().quit()
 
@@ -112,8 +112,50 @@ func _run_community_pack_tests(failures: Array[String]) -> void:
 	else:
 		failures.append("could not create ZIP self-test fixture")
 	if FileAccess.file_exists(zip_path): DirAccess.remove_absolute(zip_path)
+	_test_flat_pack_archive(installer, failures)
 
 	if failures.is_empty(): print("SELFTEST PASS | community catalog and ZIP safety checks")
+
+
+func _test_flat_pack_archive(installer: Script, failures: Array[String]) -> void:
+	var zip_path: String = "user://community-pack-flat-selftest.zip"
+	var test_root: String = "user://community-pack-flat-selftest-packs"
+	if FileAccess.file_exists(zip_path): DirAccess.remove_absolute(zip_path)
+	var packer: = ZIPPacker.new()
+	if packer.open(zip_path) != OK:
+		failures.append("could not create flat ZIP self-test fixture")
+		return
+	for path: String in ["dub_video.ogv", "line.wav", "line.ini"]:
+		packer.start_file(path)
+		packer.write_file(PackedByteArray([4, 5, 6]))
+		packer.close_file()
+	packer.close()
+
+	var indexed: Dictionary = installer.inspect_zip(zip_path)
+	var entries: Array[Dictionary] = []
+	for value: Variant in Array(indexed.get("entries", [])):
+		if value is Dictionary: entries.append(value)
+	if indexed.has("error") or installer._find_dub_root(entries) != "":
+		failures.append("flat dub-pack ZIP detection")
+	else:
+		var result: Dictionary = installer._validate_and_extract(
+			zip_path,
+			{"id": 2147483645, "name": "Flat selftest pack", "author": "Selftest"},
+			{"id": 124, "name": "flat-fixture.zip", "md5": FileAccess.get_md5(zip_path)},
+			test_root,
+			false)
+		if result.has("error"):
+			failures.append("flat ZIP installation: %s" % str(result["error"]))
+		else:
+			var installed: String = str(result.get("path", ""))
+			if (installed == test_root or installed.get_base_dir() != test_root
+				or not FileAccess.file_exists(installed.path_join("dub_video.ogv"))
+				or FileAccess.file_exists(test_root.path_join("dub_video.ogv"))):
+				failures.append("flat ZIP files were not contained in their own pack folder")
+			_remove_test_tree(installed, test_root)
+	_remove_test_tree(test_root.path_join(".tcv-community-staging"), test_root)
+	DirAccess.remove_absolute(test_root)
+	if FileAccess.file_exists(zip_path): DirAccess.remove_absolute(zip_path)
 
 
 func _remove_test_tree(path: String, allowed_root: String) -> void:

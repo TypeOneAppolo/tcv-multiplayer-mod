@@ -263,7 +263,9 @@ directory for traversal paths, links, encryption and expansion bombs, and
 extracts only the media, image and metadata formats a dub pack needs. Extraction
 happens in a temporary folder beside `packs_voice`, then the completed directory
 is renamed into place in one operation. Failed installs are removed rather than
-leaving half a pack behind.
+leaving half a pack behind. If an archive puts every file directly at its ZIP
+root, the installer wraps those files in a generated pack folder instead of
+spilling them directly into `packs_voice`.
 
 Those checks reduce the attack surface; they do not make arbitrary community
 media trustworthy. A malicious file could still target a bug in a media decoder.

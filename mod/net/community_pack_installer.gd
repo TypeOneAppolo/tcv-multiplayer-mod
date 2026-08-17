@@ -10,6 +10,7 @@ signal failed(message: String)
 const DOWNLOAD_ROOT: String = "user://community_pack_downloads"
 const REGISTRY_PATH: String = "user://community_pack_registry.json"
 const MANIFEST_NAME: String = ".tcv-community-pack.json"
+const NO_DUB_ROOT: String = "::missing-dub-root::"
 
 const MAX_ARCHIVE_BYTES: int = 1024 * 1024 * 1024
 const MAX_EXPANDED_BYTES: int = 4 * 1024 * 1024 * 1024
@@ -190,7 +191,7 @@ static func _validate_and_extract(
 	for value: Variant in Array(indexed.get("entries", [])):
 		if value is Dictionary: entries.append(value)
 	var root: String = _find_dub_root(entries)
-	if root == String.chr(0):
+	if root == NO_DUB_ROOT:
 		return {"error": "No dub pack was found in the archive. A dub pack needs an OGV video and audio clips."}
 
 	var chosen: Array[Dictionary] = []
@@ -411,7 +412,7 @@ static func inspect_zip(path: String) -> Dictionary:
 
 
 static func _find_dub_root(entries: Array[Dictionary]) -> String:
-	var best: String = String.chr(0)
+	var best: String = NO_DUB_ROOT
 	var best_audio: int = -1
 	for entry: Dictionary in entries:
 		if bool(entry.get("directory", false)): continue
@@ -428,7 +429,7 @@ static func _find_dub_root(entries: Array[Dictionary]) -> String:
 		if audio > best_audio or (audio == best_audio and candidate.length() > best.length()):
 			best = candidate
 			best_audio = audio
-	return best if best_audio > 0 else String.chr(0)
+	return best if best_audio > 0 else NO_DUB_ROOT
 
 
 static func installed_path(mod_id: int) -> String:
