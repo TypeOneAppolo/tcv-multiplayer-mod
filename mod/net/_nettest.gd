@@ -82,7 +82,7 @@ func _make_test_dub_pack() -> Dictionary:
 
 func _run_host() -> void:
 	print("NETTEST | hosting...")
-	Net.pack_sync.enable_test_automation(false, true)
+	Net.pack_sync.enable_test_automation(false, true, true)
 	var err: Error = Net.host_game("Hosty", "packA")
 	print("NETTEST | host_game err=%d" % err)
 
@@ -128,6 +128,10 @@ func _run_host() -> void:
 		print("NETTEST FAIL | host pack preparation did not complete")
 	else:
 		print("NETTEST PASS | host waited until the client had the pack (%s)" % str(prepared["pack_id"]).left(12))
+		if Net.pack_sync._panel_dismissed and not Net.pack_sync._panel.visible:
+			print("NETTEST PASS | pack-sharing panel stayed dismissed after Begin")
+		else:
+			print("NETTEST FAIL | pack-sharing panel remained visible after Begin")
 		Net.pack_sync._cancel_host_offer("PackSync network test complete.")
 
 	Net.set_my_dub_characters(PackedStringArray(["Tuco"]))
@@ -202,6 +206,16 @@ func _run_client() -> void:
 		await get_tree().process_frame
 		offer_waited += get_process_delta_time()
 	if Net.pack_sync._client_state == "offered":
+		if bool(Net.pack_sync._active_offer.get("force_download", false)):
+			var first_file: Dictionary = Net.pack_sync._active_offer["files"][0]
+			var seeded_root: String = "user://packsync-nettest-client-cache".path_join(
+				str(Net.pack_sync._active_offer["pack_id"]))
+			var seeded: String = seeded_root.path_join(str(first_file["path"]))
+			DirAccess.make_dir_recursive_absolute(seeded.get_base_dir())
+			_write_test_bytes(seeded, int(first_file["size"]), 99)
+			print("NETTEST PASS | host could force a fresh transfer for testing")
+		else:
+			print("NETTEST FAIL | test offer did not force a fresh transfer")
 		Net.pack_sync.decline_download()
 		await get_tree().process_frame
 		if Net.pack_sync._client_state == "declined":
@@ -211,6 +225,10 @@ func _run_client() -> void:
 		# Retry immediately, then interrupt once more after bytes are on disk. The
 		# second retry exercises both resume offsets and stale-chunk rejection.
 		Net.pack_sync.accept_download()
+		if Net.pack_sync._client_received == 0:
+			print("NETTEST PASS | forced transfer ignored the seeded cache file")
+		else:
+			print("NETTEST FAIL | forced transfer resumed the seeded cache file")
 		var partial_waited: float = 0.0
 		while (Net.pack_sync._client_state == "downloading"
 			and Net.pack_sync._client_received < 150000 and partial_waited < 5.0):

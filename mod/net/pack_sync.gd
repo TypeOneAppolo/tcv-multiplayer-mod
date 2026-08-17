@@ -58,12 +58,16 @@ var _download_file: FileAccess
 var _download_index: int = -1
 var _download_offset: int = 0
 var _render_queued: bool = false
+var _panel_dismissed: bool = true
+var _force_fresh_pending: bool = false
 
 var _layer: CanvasLayer
 var _panel: PanelContainer
 var _title: Label
 var _detail: Label
+var _warning: Label
 var _roster: Label
+var _force_download_box: CheckBox
 var _progress: ProgressBar
 var _primary: Button
 var _secondary: Button
@@ -72,6 +76,7 @@ var _secondary: Button
 # client and host to press the visible buttons.
 var _test_auto_accept: bool = false
 var _test_auto_begin: bool = false
+var _test_force_download: bool = false
 
 
 func configure(net: Node) -> void:
@@ -80,9 +85,10 @@ func configure(net: Node) -> void:
 		_net.player_list_changed.connect(_on_roster_changed, CONNECT_DEFERRED)
 
 
-func enable_test_automation(auto_accept: bool, auto_begin: bool) -> void:
+func enable_test_automation(auto_accept: bool, auto_begin: bool, force_download: bool = false) -> void:
 	_test_auto_accept = auto_accept
 	_test_auto_begin = auto_begin
+	_test_force_download = force_download
 
 
 func set_test_cache_root(path: String) -> void:
@@ -112,13 +118,14 @@ func reset() -> void:
 	_client_error = ""
 	_client_received = 0
 	_client_transfer_id = 0
+	_force_fresh_pending = false
+	_panel_dismissed = true
 	_hide_panel.call_deferred()
 	_emit_state_changed.call_deferred()
 
 
 func dismiss_for_start(pack_id: String) -> void:
-	if str(_active_offer.get("pack_id", "")) == pack_id and is_instance_valid(_panel):
-		_panel.visible = false
+	if str(_active_offer.get("pack_id", "")) == pack_id: _dismiss_panel()
 
 
 func local_path_for(pack_id: String) -> String:
@@ -148,6 +155,7 @@ func prepare_dub(folder: String, clip_paths: PackedStringArray) -> Dictionary:
 	_host_decision = 0
 	_host_sharing_confirmed = false
 	_client_error = ""
+	_panel_dismissed = false
 	_show_scanning()
 
 	var thread: = Thread.new()
@@ -219,7 +227,7 @@ func prepare_dub(folder: String, clip_paths: PackedStringArray) -> Dictionary:
 		"pack_id": pack_id,
 		"clip_paths": relative_clips,
 	}
-	if is_instance_valid(_panel): _panel.visible = false
+	_dismiss_panel()
 	return result
 
 
@@ -373,6 +381,9 @@ func _valid_sha256(value: String) -> bool:
 func _rpc_pack_offer_begin(summary: Dictionary) -> void:
 	if _net == null or _net.is_host(): return
 	var offer_id: String = str(summary.get("id", ""))
+	if str(_active_offer.get("id", "")) == offer_id: return
+	_panel_dismissed = false
+	_force_fresh_pending = false
 	var pack_id: String = str(summary.get("pack_id", ""))
 	var pack_name: String = str(summary.get("name", "Dub pack"))
 	var folder_name: String = str(summary.get("folder_name", ""))
@@ -384,7 +395,6 @@ func _rpc_pack_offer_begin(summary: Dictionary) -> void:
 		_active_offer = {"id": offer_id, "pack_id": pack_id, "total_bytes": maxi(0, total)}
 		_client_fail("The host sent an invalid pack summary.")
 		return
-	if str(_active_offer.get("id", "")) == offer_id: return
 	_close_download_file()
 	_incoming_offer = {
 		"id": offer_id,
@@ -394,6 +404,7 @@ func _rpc_pack_offer_begin(summary: Dictionary) -> void:
 		"total_bytes": total,
 		"file_count": count,
 		"ignored": clampi(int(summary.get("ignored", 0)), 0, MAX_FILES),
+		"force_download": summary.get("force_download", false) == true,
 	}
 	_incoming_files = []
 	_incoming_page = 0
@@ -402,6 +413,8 @@ func _rpc_pack_offer_begin(summary: Dictionary) -> void:
 	_client_state = "checking"
 	_client_error = ""
 	_client_received = 0
+	_force_fresh_pending = false
+	_panel_dismissed = false
 	_queue_render()
 	_send_client_state("checking")
 
@@ -457,6 +470,7 @@ func _rpc_pack_offer_end(offer_id: String, clips: Array) -> void:
 		_reject_incoming_offer(problem)
 		return
 	_active_offer = offer
+	_force_fresh_pending = bool(offer.get("force_download", false))
 	_incoming_offer.clear()
 	_incoming_files.clear()
 	_incoming_page = 0
@@ -477,6 +491,7 @@ func _send_offer_manifest(peer: int, offer_id: String) -> void:
 		"total_bytes": _active_offer["total_bytes"],
 		"file_count": files.size(),
 		"ignored": _active_offer.get("ignored", 0),
+		"force_download": _active_offer.get("force_download", false),
 	}
 	_rpc_pack_offer_begin.rpc_id(peer, summary)
 	var pages: int = int((files.size() + MANIFEST_FILES_PER_PAGE - 1) / MANIFEST_FILES_PER_PAGE)
@@ -493,6 +508,12 @@ func _send_offer_manifest(peer: int, offer_id: String) -> void:
 
 func _check_for_existing_pack(offer_id: String) -> void:
 	if str(_active_offer.get("id", "")) != offer_id: return
+	if bool(_active_offer.get("force_download", false)):
+		_client_state = "offered"
+		_queue_render()
+		_send_client_state("offered")
+		if _test_auto_accept: accept_download.call_deferred()
+		return
 	var candidates: PackedStringArray = []
 	var pack_id: String = str(_active_offer["pack_id"])
 	var cached: String = _cache_path(pack_id)
@@ -569,12 +590,14 @@ func accept_download() -> void:
 		_client_fail("Could not create the multiplayer pack cache.")
 		return
 
+	var force_fresh: bool = bool(_active_offer.get("force_download", false)) and _force_fresh_pending
 	var offsets: Array[int] = []
 	var present: int = 0
 	for value_item: Variant in Array(_active_offer["files"]):
 		var item: Dictionary = value_item
 		var target: String = _cache_path(pack_id).path_join(str(item["path"]))
-		var size: int = _file_size(target) if FileAccess.file_exists(target) else 0
+		var size: int = 0 if force_fresh else (
+			_file_size(target) if FileAccess.file_exists(target) else 0)
 		if size < 0 or size > int(item["size"]):
 			var reset_file: FileAccess = FileAccess.open(target, FileAccess.WRITE)
 			if reset_file != null: reset_file.close()
@@ -589,6 +612,18 @@ func accept_download() -> void:
 		if free > 0 and free < needed + FREE_SPACE_MARGIN:
 			_client_fail("Not enough disk space: this download still needs %s." % _format_bytes(needed))
 			return
+
+	if force_fresh:
+		for value_item: Variant in Array(_active_offer["files"]):
+			var item: Dictionary = value_item
+			var target: String = _cache_path(pack_id).path_join(str(item["path"]))
+			if not FileAccess.file_exists(target): continue
+			var reset_file: FileAccess = FileAccess.open(target, FileAccess.WRITE)
+			if reset_file == null:
+				_client_fail("Could not reset the cached copy of %s for the test download." % str(item["path"]))
+				return
+			reset_file.close()
+		_force_fresh_pending = false
 
 	_client_state = "downloading"
 	_client_error = ""
@@ -892,6 +927,7 @@ func _rpc_pack_cancel(offer_id: String, reason: String) -> void:
 	_incoming_offer.clear()
 	_incoming_files.clear()
 	_incoming_manifest_chars = 0
+	_panel_dismissed = true
 	_hide_panel.call_deferred()
 	_emit_state_changed.call_deferred()
 
@@ -972,6 +1008,11 @@ func _hide_panel() -> void:
 	if is_instance_valid(_panel): _panel.visible = false
 
 
+func _dismiss_panel() -> void:
+	_panel_dismissed = true
+	_hide_panel()
+
+
 func _emit_state_changed() -> void:
 	state_changed.emit()
 
@@ -1007,9 +1048,20 @@ func _build_ui() -> void:
 	_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_detail)
 
+	_warning = Label.new()
+	_warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_warning.add_theme_color_override("font_color", Color("ffcc44"))
+	column.add_child(_warning)
+
 	_roster = Label.new()
 	_roster.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	column.add_child(_roster)
+
+	_force_download_box = CheckBox.new()
+	_force_download_box.text = "Force fresh download for testing"
+	_force_download_box.tooltip_text = ("Ignore installed and cached copies for this offer. "
+		+ "Clients must still accept the download.")
+	column.add_child(_force_download_box)
 
 	_progress = ProgressBar.new()
 	_progress.show_percentage = true
@@ -1029,12 +1081,16 @@ func _build_ui() -> void:
 
 
 func _show_scanning() -> void:
+	_panel_dismissed = false
 	_panel.visible = true
-	_title.text = "EXPERIMENTAL DUB PACK SHARING"
-	_detail.text = ("Preparing the selected pack. Sharing is experimental: large transfers may be slow "
-		+ "or cause disconnects on weaker connections. Only use it when everyone trusts the host and "
-		+ "the source of the pack. Nothing will be offered until you confirm.")
+	_title.text = "DUB PACK SHARING"
+	_detail.text = "Checking the selected pack and calculating its content hash..."
+	_warning.visible = true
+	_warning.text = ("EXPERIMENTAL: Large transfers may be slow or disconnect weaker connections. "
+		+ "Only share packs from sources you trust.")
 	_roster.text = ""
+	_force_download_box.button_pressed = false
+	_force_download_box.visible = false
 	_progress.visible = false
 	_primary.visible = false
 	_secondary.visible = true
@@ -1044,10 +1100,13 @@ func _show_scanning() -> void:
 
 func _show_host_error(reason: String) -> void:
 	_host_decision = -1
+	_panel_dismissed = false
 	_panel.visible = true
 	_title.text = "PACK CANNOT BE SHARED"
 	_detail.text = reason
+	_warning.visible = false
 	_roster.text = ""
+	_force_download_box.visible = false
 	_progress.visible = false
 	_primary.visible = false
 	_secondary.visible = true
@@ -1069,14 +1128,17 @@ func _render_deferred() -> void:
 
 func _render() -> void:
 	if not is_instance_valid(_panel) or _active_offer.is_empty(): return
+	if _panel_dismissed:
+		_panel.visible = false
+		return
 	_panel.visible = true
 	var total: int = int(_active_offer.get("total_bytes", 0))
 	if _net != null and _net.is_host():
-		_title.text = "EXPERIMENTAL DUB PACK SHARING"
-		_detail.text = ("%s — %s. Host-to-player pack sharing is experimental. Large transfers may "
-			+ "be slow or cause disconnects on weaker connections. Only use it when everyone trusts "
-			+ "the host and the source of this pack.") % [
-			_active_offer.get("name", "Dub pack"), _format_bytes(total)]
+		_title.text = "DUB PACK SHARING"
+		_detail.text = "%s — %s" % [_active_offer.get("name", "Dub pack"), _format_bytes(total)]
+		_warning.visible = true
+		_warning.text = ("EXPERIMENTAL: Large transfers may be slow or disconnect weaker connections. "
+			+ "Only share packs from sources you trust.")
 		var ignored: int = int(_active_offer.get("ignored", 0))
 		if ignored > 0:
 			_detail.text += " %d generated or unsupported file(s) will not be copied." % ignored
@@ -1097,6 +1159,7 @@ func _render() -> void:
 					status += " — " + str(record["error"])
 				lines.append("%s: %s" % [_net.player_name_for_slot(slot), status])
 			_roster.text = "\n".join(lines)
+		_force_download_box.visible = not _host_sharing_confirmed
 		_progress.visible = false
 		_primary.visible = true
 		_primary.text = "Begin dub" if _host_sharing_confirmed else "Enable experimental sharing"
@@ -1105,11 +1168,13 @@ func _render() -> void:
 		_secondary.text = "Cancel"
 		_secondary.disabled = false
 	else:
-		_title.text = "EXPERIMENTAL PACK DOWNLOAD"
-		_detail.text = ("%s — %s. Host-to-player sharing is experimental and may be slow or "
-			+ "disconnect on unstable connections. Only download packs from a host you trust.") % [
-			_active_offer.get("name", "Dub pack"), _format_bytes(total)]
+		_title.text = "DUB PACK DOWNLOAD"
+		_detail.text = "%s — %s" % [_active_offer.get("name", "Dub pack"), _format_bytes(total)]
+		_warning.visible = true
+		_warning.text = ("EXPERIMENTAL: Transfers may be slow or disconnect unstable connections. "
+			+ "Only download packs from a host you trust.")
 		_roster.text = _client_status_text()
+		_force_download_box.visible = false
 		_progress.visible = _client_state in ["downloading", "verifying", "ready"]
 		_progress.min_value = 0
 		_progress.max_value = maxi(1, total)
@@ -1126,7 +1191,11 @@ func _render() -> void:
 func _client_status_text() -> String:
 	match _client_state:
 		"checking": return "Checking whether this pack is already installed..."
-		"offered": return "This pack is missing. It will be kept in the multiplayer cache, not installed into your pack library."
+		"offered":
+			if bool(_active_offer.get("force_download", false)):
+				return ("The host requested a fresh test transfer, so installed and cached copies will be "
+					+ "ignored. The download stays in the multiplayer cache.")
+			return "This pack is missing. It will be kept in the multiplayer cache, not installed into your pack library."
 		"declined": return "Download declined. You can change your mind while the host is still waiting."
 		"downloading": return "Downloading from the host: %s / %s" % [
 			_format_bytes(_client_received),
@@ -1153,7 +1222,9 @@ func _state_label(state: String) -> String:
 func _on_primary() -> void:
 	if _net != null and _net.is_host():
 		if not _host_sharing_confirmed: _begin_host_sharing()
-		elif _all_players_ready(): _host_decision = 1
+		elif _all_players_ready():
+			_host_decision = 1
+			_dismiss_panel()
 	else:
 		accept_download()
 
@@ -1161,6 +1232,8 @@ func _on_primary() -> void:
 func _begin_host_sharing() -> void:
 	if (_net == null or not _net.is_host() or _active_offer.is_empty()
 		or _host_sharing_confirmed): return
+	_active_offer["force_download"] = _test_force_download or (
+		is_instance_valid(_force_download_box) and _force_download_box.button_pressed)
 	_host_sharing_confirmed = true
 	for peer: int in _net.players:
 		if peer != 1: _send_offer_manifest.call_deferred(peer, str(_active_offer["id"]))
@@ -1169,11 +1242,8 @@ func _begin_host_sharing() -> void:
 
 func _on_secondary() -> void:
 	if _net != null and _net.is_host():
-		if _active_offer.is_empty():
-			_host_decision = -1
-			_panel.visible = false
-		else:
-			_host_decision = -1
+		_dismiss_panel()
+		_host_decision = -1
 	else:
 		decline_download()
 

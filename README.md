@@ -183,6 +183,12 @@ and do not appear in the normal pack selector. A completed pack is reused by its
 content hash the next time it is selected, while an interrupted download resumes
 from the files already on disk.
 
+Testing two copies on one computer normally finds the same installed packs and
+skips the transfer. Before enabling sharing, the host can tick **Force fresh
+download for testing**. That offer ignores the client's installed and cached
+copy, but still requires the client to accept it. If the forced transfer is
+interrupted, Retry resumes the new partial download instead of clearing it again.
+
 Everyone also needs the same build of the mod. If someone installed an older
 version they get kicked with a message saying so. Just get them to run the
 installer again.
