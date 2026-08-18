@@ -43,6 +43,7 @@ you're dubbing and then watch the finished thing together.
   - [Command line options](#command-line-options)
 - [Setting up a game](#setting-up-a-game)
 - [Playing](#playing)
+- [Community packs (experimental)](#community-packs-experimental)
 - [Is this a virus](#is-this-a-virus)
 - [Troubleshooting](#troubleshooting)
 - [Why you cant just drop files in](#why-you-cant-just-drop-files-in)
@@ -74,8 +75,9 @@ installing it and getting a game going:
    [troubleshooting](#troubleshooting).
 3. Double click **Install.bat** and wait a few minutes. It'll ask you to
    install python first if you haven't got it.
-4. Copy the host's voice packs to everyone else (see
-   [setting up a game](#setting-up-a-game)).
+4. For the normal game show, copy the host's voice packs to everyone else (see
+   [setting up a game](#setting-up-a-game)). Dub mode can send its selected pack
+   from the host when somebody is missing it.
 5. Launch the new exe and click **ONLINE** in the top right of the main menu
    (or press **F9**), then host or join.
 
@@ -110,7 +112,7 @@ doesn't do that any more. See
 
 It downloads about 140mb of tools ([gdRE](https://github.com/GDRETools/gdsdecomp)
 and [Godot](https://godotengine.org), both free), builds the mod, and leaves
-`TheChoicerVoicer-Multiplayer-1.1.8.exe` sat in the same folder. Takes a few
+`TheChoicerVoicer-Multiplayer-1.2.0-dev.exe` sat in the same folder. Takes a few
 minutes. Run it again later and it reuses the downloads so it's quicker the
 second time.
 
@@ -151,9 +153,8 @@ python install_mod.py "C:\path\to\TheChoicerVoicer_0-5-1 stable.exe"
 
 ## setting up a game
 
-Everybody needs the same voice packs. This is the bit that trips people up, so
-do it before you try to play. Scores get worked out against the clips you're
-performing, so everyone needs the actual clip files the host picks.
+Everybody needs the clips used by the normal game show. Scores get worked out
+against those clips, so copy the host's voice packs before you play that mode.
 
 Copy the host's
 
@@ -164,8 +165,30 @@ Copy the host's
 folder over to everyone else, into the same place. Paste that path straight into
 explorer's address bar if you can't find it.
 
-The lobby lists anything it spots as different, and the mod would rather flat out
-refuse to start than let you desync halfway through a round.
+The lobby lists anything it spots as different, and the normal game show would
+rather flat out refuse to start than let you desync halfway through a round.
+
+Dub mode handles this differently. When the host presses Play on a dub pack,
+they first see its size and an **experimental sharing** warning. Nothing is
+offered until the host explicitly enables it. Anyone without that exact pack is
+then shown its name, size and the same warning, and chooses whether to download
+it from the host. Large transfers may be slow or cause disconnects on weaker
+connections. **Only accept packs from a host you trust.** Declining does not kick
+them or install anything; the Download button remains available if they change
+their mind. The host sees who already has it, who declined, and each download's
+progress. **Begin dub** stays disabled until every connected player has verified
+the pack.
+
+Received packs live in `%APPDATA%\YeahMaybe\ChoicerVoicer\multiplayer_pack_cache`
+and do not appear in the normal pack selector. A completed pack is reused by its
+content hash the next time it is selected, while an interrupted download resumes
+from the files already on disk.
+
+Testing two copies on one computer normally finds the same installed packs and
+skips the transfer. Before enabling sharing, the host can tick **Force fresh
+download for testing**. That offer ignores the client's installed and cached
+copy, but still requires the client to accept it. If the forced transfer is
+interrupted, Retry resumes the new partial download instead of clearing it again.
 
 Everyone also needs the same build of the mod. If someone installed an older
 version they get kicked with a message saying so. Just get them to run the
@@ -185,8 +208,8 @@ name, not their real one. 2 to 4 players.
    one.
 2. Host hits **Host**. Everyone else types the host's IP in and hits **Join**.
 3. Once everyone's showing in the list, host hits **Start (choose clips)** for the
-   normal game show, or **Start (dub mode)**, picks a pack, and everyone gets
-   dragged into the match together.
+   normal game show, or **Start (dub mode)** and picks a pack. Anyone missing the
+   dub pack accepts the download; the host begins once everybody is ready.
 
 ### picking who you dub
 
@@ -218,6 +241,62 @@ note while it does. **Stop** goes out to everyone the same way.
 
 When the pack's finished you all get put back in the lobby and the host can pick
 another one. No need to restart anything.
+
+## community packs (experimental)
+
+The mod now has a native **Community Packs** screen for Dub Mode submissions on
+GameBanana. Open **COMMUNITY PACKS** directly from the normal main menu, or use
+**Browse community packs** in the online screen. The mod also tries to add it to
+Extras when that screen's layout can be identified safely. This is an in-game
+catalog, not an embedded web page: it fetches GameBanana's public JSON, the
+selected preview image and, only after you queue it, the selected archive.
+
+Pick a submission, choose one of its files and press **Add to download queue**.
+Downloads run one at a time so several 200–450 MB archives do not fight over the
+same connection. You can queue more, cancel or retry them from **Downloads**,
+then close the browser while the queue continues under the game's persistent Net
+autoload.
+
+By default, a newly queued job waits while you are in online multiplayer. The
+Downloads panel has a persistent **Allow downloads to start during online
+multiplayer** option for players who prefer otherwise. A large HTTPS transfer can
+still increase latency by saturating the connection even on a fast line, so the
+option defaults off. Turning it off never interrupts the active download; it only
+makes the next queued item wait until you leave online play.
+
+A successful install goes into the game's normal `packs_voice` folder, so it is
+available to the game and to host pack sharing. If a pack finishes while a pack
+selection screen is already open, leave and reopen that selector so the base
+game scans its folders again. Canceling an active download removes its partial
+file; retrying currently starts that archive from zero rather than resuming it.
+The browser's **Installed** view lists every pack installed through this feature,
+including its creator, folder, install date and extracted size when available.
+You can uninstall it there without finding the GameBanana submission again.
+Only folders carrying this installer's matching manifest appear in the list or
+can be removed; manually installed packs remain untouched.
+
+For now, the installer accepts ZIP files only. RAR support needs a separate
+archive reader because Godot cannot inspect it itself; the browser explains this
+and prefers a ZIP automatically when a submission offers both formats. Before
+moving anything into `packs_voice`, it requires GameBanana's analysis and
+antivirus checks to have passed, verifies the reported file size and MD5, checks
+the ZIP directory for traversal paths, links, encryption and expansion bombs, and
+extracts only the media, image and metadata formats a dub pack needs. Extraction
+happens in a temporary folder beside `packs_voice`, then the completed directory
+is renamed into place in one operation. Failed installs are removed rather than
+leaving half a pack behind. If an archive puts every file directly at its ZIP
+root, the installer wraps those files in a generated pack folder instead of
+spilling them directly into `packs_voice`.
+
+Those checks reduce the attack surface; they do not make arbitrary community
+media trustworthy. A malicious file could still target a bug in a media decoder.
+Only install packs from creators you trust. Content-rated submissions are hidden
+unless you explicitly enable them.
+
+An installed submission has an **Uninstall** button. It only removes a direct
+child of `packs_voice` carrying the matching manifest written by this installer;
+manually installed folders are deliberately left alone. There is no update flow
+yet. RAR and 7z archives still need to be installed manually.
 
 ## is this a virus
 
@@ -381,6 +460,13 @@ v1.1.8 is on protocol 7 and cannot play with v1.1.7 or earlier. Recordings are
 acknowledged as they arrive now, which took another call, and they go over the
 wire compressed, so the audio itself is in a different shape too. Same story:
 right message on both screens, everybody rebuilds.
+
+v1.2.0-dev is on protocol 8. Dub mode identifies the selected pack by its file
+contents, offers it to anyone missing it, streams accepted downloads through the
+existing ENet connection with a bounded acknowledged window, verifies every file
+with SHA-256, and waits for the whole lobby before starting. The dub start packet
+now contains a content ID and relative clip paths rather than paths from the
+host's disk, so protocol 8 cannot play with earlier builds.
 
 **We were playing fine and then he just got kicked. No error, no crash, he was
 back at the menu.** That was a bug, fixed in v1.1.8, and it's the same 30 second
@@ -549,11 +635,22 @@ send one performance per turn, and stop everyone drifting apart between phases.
   means they're still recording, which can take as long as they like; a transfer
   that started and went quiet means the link died, and that gets 45 seconds. One
   combined limit couldn't tell those apart and skipped people for being slow.
+- Dub packs use a separate transfer node and reliable channel so adding its calls
+  cannot disturb the name-sorted join handshake. The manifest itself is paged;
+  pack files are streamed in 24KB chunks with at most 96KB unacknowledged per
+  client. Clients write straight to a resumable cache, reject unsafe paths and
+  executable formats, verify SHA-256 before reporting ready, and never hold a
+  whole video in memory.
 
 What's in `mod/`:
 
 ```
 mod/net/net_manager.gd            all the netcode, one autoload
+mod/net/pack_sync.gd              consent, cache and host-to-client dub packs
+mod/net/gamebanana_client.gd      GameBanana catalog and response normalization
+mod/net/community_pack_browser.gd native community catalog screen
+mod/net/community_pack_installer.gd staged, validated ZIP installation
+mod/net/community_pack_queue.gd    background queue, cancellation and retry
 mod/net/lobby.gd                  the lobby screen, built in code
 mod/net/dub_character_picker.gd   the casting screen, built in code
 mod/net/_selftest.gd              compiles every script in the project
@@ -564,8 +661,7 @@ mod/patches/v0_5_2/*.patch        the files that differ on 0.5.2
 mod/export_presets.cfg            the windows export preset
 ```
 
-Three new files and about 450 changed lines across 7 of the game's scripts. The
-installer reads `config/version` out of the decompiled project and picks the
+The installer reads `config/version` out of the decompiled project and picks the
 right patch set, so supporting a new build usually means one extra folder. It
 also fixes a gdRE bug where it writes node paths as `$A / B`, which every
 decompiled build needs sorting whether you're modding it or not.
@@ -591,9 +687,11 @@ godot --headless --path project -- host
 godot --headless --path project -- client
 ```
 
-`_nettest.gd` covers the bug that used to make the game unplayable after one
-pack. It runs a second show reusing the same contestant slot and barrier tags and
-checks the new take turns up instead of the old one.
+`_nettest.gd` runs a second show reusing the same contestant slot and barrier
+tags and checks the new take turns up instead of the old one. It also creates a
+throwaway dub pack larger than the transfer window: the client declines it,
+starts it on the second try, interrupts it after bytes reach disk, resumes and
+verifies it, and the host proves it did not continue until that was done.
 
 `devtest/old_peer/` is a project of its own, and needs no copy of the game. It
 connects to a host, says nothing at all, and leaves — which is exactly what a
@@ -615,6 +713,11 @@ against a clean decompile with the node path fix applied.
 
 - The lobby button is drawn over the menu by the mod rather than being a real
   menu entry, so it doesn't match the game's own styling.
+- Extras integration is attempted at runtime because the purchased game's scene
+  is not stored here. The normal main-menu and online-screen buttons are the
+  reliable entry points if a future game build changes Extras.
+- The community installer supports ZIP archives only, has no update screen, and
+  restarts canceled downloads rather than resuming their partial files.
 - Windows 0.5.1 and 0.5.2 dev-2. Anything else fails with a clear error when it
   goes to patch it.
 - Everyone needs the same build. The mod checks and kicks you out with a message

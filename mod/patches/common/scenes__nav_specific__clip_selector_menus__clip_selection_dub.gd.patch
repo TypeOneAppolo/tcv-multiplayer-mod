@@ -1,6 +1,6 @@
 --- a/scenes/nav_specific/clip_selector_menus/clip_selection_dub.gd
 +++ b/scenes/nav_specific/clip_selector_menus/clip_selection_dub.gd
-@@ -37,7 +37,19 @@
+@@ -37,6 +37,20 @@
  
  
  func initiate_session() -> void :
@@ -14,8 +14,10 @@
 +		var paths: PackedStringArray = []
 +		for c: OmniClip in Metro.gameplay_resource_dub_mode.omni_clip_array.data:
 +			paths.append(c.self_global_path)
++		var prepared: Dictionary = await Net.prepare_dub_pack(tree.active_pack.global_folder_path, paths)
++		if prepared.is_empty(): return
 +		Net.apply_roster_to_metro()
-+		Net.start_dub(tree.active_pack.global_folder_path, paths)
++		Net.start_dub(str(prepared["pack_id"]), PackedStringArray(prepared["clip_paths"]))
  	match M.session_type:
  
  

@@ -163,6 +163,11 @@ func _build_support_footer() -> void:
 	discord.add_theme_color_override("font_color", DISCORD_COLOR)
 	discord.add_theme_color_override("font_hover_color", DISCORD_COLOR.lightened(0.3))
 	links.add_child(discord)
+	var community: = Button.new()
+	community.text = "Browse community packs"
+	community.tooltip_text = "Open the in-game GameBanana Dub Mode browser."
+	community.pressed.connect(Net.open_community_packs)
+	links.add_child(community)
 	links.add_child(_link_button("Support me on Ko-fi", KOFI_URL))
 	links.add_child(_link_button("Upvote on GameBanana", GAMEBANANA_URL))
 
@@ -326,5 +331,7 @@ func _refresh() -> void:
 		var mismatched: PackedStringArray = Net.mismatched_players()
 		if mismatched.is_empty(): warning_label.text = ""
 		else:
-			warning_label.text = ("Your voice packs are not identical: %s.\nThis is only a problem "
-				+ "if the host picks clips from those packs. Start anyway if you like.") % "; ".join(mismatched)
+			warning_label.text = ("Your voice pack libraries are not identical: %s.\n"
+				+ "Standard mode only cares if the host picks clips from one of these packs. "
+				+ "For Dub Mode, a missing selected pack is okay: enable experimental pack sharing, "
+				+ "let everyone accept and verify it, then begin the dub.") % "; ".join(mismatched)

@@ -16,10 +16,16 @@ signal scores_received(scores: PackedInt32Array)
 # anything that goes out, even when the protocol below does not move: two builds
 # that behave differently and both call themselves 1.1.5 make the one question
 # worth asking -- "what does yours say?" -- impossible to answer.
-const MOD_VERSION: String = "1.1.7"
+const MOD_VERSION: String = "1.2.0-dev"
 
 const PORT: int = 7654
 const MAX_PLAYERS: int = 4
+# 8: dub packs can be offered, streamed, verified and cached from the host. The
+# transfer calls live on a PackSync child so the handshake below stays pinned,
+# but _rpc_start_dub now carries a content ID and relative paths instead of the
+# host's absolute disk paths. It is deliberately incompatible with older builds.
+# 7: recording chunks are compressed and acknowledged instead of filling ENet's
+# reliable queue on a slow link.
 # 6: the dub watch goes through the host now, which took two new @rpc methods.
 # Both are named _rpc_* so the handshake still sorts first and a 1.1.6 joiner is
 # told what is wrong rather than hanging -- but every call index after them has
@@ -32,7 +38,7 @@ const MAX_PLAYERS: int = 4
 # 4: pack hashes cover the contents of a pack and not the folder name, so the
 # manifest from an older build would compare against nothing and read as a
 # missing pack. better to say so than to let it look broken.
-const PROTOCOL_VERSION: int = 6
+const PROTOCOL_VERSION: int = 8
 const CHUNK_SIZE: int = 24576
 const PERFORMANCE_TIMEOUT: float = 60.0
 const BARRIER_TIMEOUT: float = 90.0
@@ -77,6 +83,12 @@ var _barriers_done: Dictionary = {}
 # exactly like the new one.
 var session_id: int = 0
 
+# A child node keeps the large-file RPC list separate from Net's name-sorted RPC
+# list. It is created at startup on every peer, so its RPC path is always the
+# same: /root/Net/PackSync.
+var pack_sync: Node
+var community_pack_downloads: Node
+
 
 func is_online() -> bool: return mode != MODE.OFFLINE
 func is_host() -> bool: return mode == MODE.HOST
@@ -108,6 +120,7 @@ func player_name_for_slot(slot: int) -> String:
 
 
 func host_game(player_name: String, pack: String, port: int = PORT) -> Error:
+	if pack_sync != null: pack_sync.reset()
 	var peer: = ENetMultiplayerPeer.new()
 	var err: Error = peer.create_server(port, MAX_PLAYERS - 1)
 	if err != OK:
@@ -149,6 +162,7 @@ func _address_hint(address: String) -> String:
 
 
 func join_game(address: String, player_name: String, pack: String, port: int = PORT) -> Error:
+	if pack_sync != null: pack_sync.reset()
 	# before the socket, not after. this walks every voice pack on the disk, and
 	# once we are connected the only place left to do it is inside the multiplayer
 	# poll, where it stalls the handshake it is holding up.
@@ -182,6 +196,7 @@ func leave() -> void:
 	_pending_handshakes.clear()
 	_handshake_answered = false
 	_reset_session_state()
+	if pack_sync != null: pack_sync.reset()
 	player_list_changed.emit()
 
 
@@ -342,6 +357,7 @@ func _on_server_disconnected() -> void:
 	_pending_handshakes.clear()
 	_handshake_answered = false
 	_reset_session_state()
+	if pack_sync != null: pack_sync.reset()
 	server_disconnected.emit()
 	if get_tree().get_root().has_node("World"): M.world.CreateMenu()
 
@@ -992,21 +1008,26 @@ func await_end_round_choice() -> int:
 
 
 
-signal dub_should_start(folder: String, clip_paths: PackedStringArray)
+signal dub_should_start(pack_id: String, clip_paths: PackedStringArray)
 signal dub_begin
 signal dub_watch(playing: bool)
 
 
-func start_dub(folder: String, clip_paths: PackedStringArray) -> void:
+func prepare_dub_pack(folder: String, clip_paths: PackedStringArray) -> Dictionary:
+	if pack_sync == null: return {}
+	return await pack_sync.prepare_dub(folder, clip_paths)
+
+
+func start_dub(pack_id: String, clip_paths: PackedStringArray) -> void:
 	if not is_host(): return
 	begin_session()
-	log_net("starting dub '%s' with %d clips" % [folder, clip_paths.size()])
-	_rpc_start_dub.rpc(session_id, folder, clip_paths)
+	log_net("starting dub pack %s with %d clips" % [pack_id.left(12), clip_paths.size()])
+	_rpc_start_dub.rpc(session_id, pack_id, clip_paths)
 
 @rpc("authority", "call_remote", "reliable")
-func _rpc_start_dub(sid: int, folder: String, clip_paths: PackedStringArray) -> void:
+func _rpc_start_dub(sid: int, pack_id: String, clip_paths: PackedStringArray) -> void:
 	begin_session(sid)
-	dub_should_start.emit(folder, clip_paths)
+	dub_should_start.emit(pack_id, clip_paths)
 
 
 var _dub_begin_pending: bool = false
@@ -1265,12 +1286,17 @@ func resolve_dub_owners(clip_characters: Array) -> PackedInt32Array:
 	return owners
 
 
-func _on_dub_should_start(folder: String, clip_paths: PackedStringArray) -> void:
+func _on_dub_should_start(pack_id: String, relative_clip_paths: PackedStringArray) -> void:
 	if is_host(): return
 	_loading_hint("The host has started. Loading the dub pack...")
-	var remap: Dictionary = pack_remap(_host_manifest())
-	folder = localise_path(folder, remap)
-	clip_paths = localise_paths(clip_paths, remap)
+	var folder: String = pack_sync.local_path_for(pack_id) if pack_sync != null else ""
+	var clip_paths: PackedStringArray = (
+		pack_sync.local_clip_paths(pack_id, relative_clip_paths) if pack_sync != null
+		else PackedStringArray())
+	if folder.is_empty() or clip_paths.size() != relative_clip_paths.size():
+		_abort_to_menu("Cannot start: the synchronized dub pack is not ready on this computer.")
+		return
+	pack_sync.dismiss_for_start(pack_id)
 	# a dub pack drags the video in with it, so this is the slowest load in the
 	# mod by far. the host already does it on a thread in clip_selection_dub;
 	# doing it inline here froze the joiner until the host's ENet gave up on it.
@@ -1360,6 +1386,10 @@ const ENTRY_INSET: Vector2 = Vector2(24, 20)
 
 var _entry_layer: CanvasLayer
 var _entry_button: Button
+var _community_entry_button: Button
+var _community_layer: CanvasLayer
+var _community_browser: Control
+var _extras_button: Button
 
 
 func _build_the_way_in() -> void:
@@ -1376,6 +1406,13 @@ func _build_the_way_in() -> void:
 	_entry_button.focus_mode = Control.FOCUS_NONE
 	_entry_button.pressed.connect(open_lobby)
 	_entry_layer.add_child(_entry_button)
+	_community_entry_button = Button.new()
+	_community_entry_button.text = "COMMUNITY PACKS"
+	_community_entry_button.tooltip_text = (
+		"Browse and install GameBanana Dub Mode packs. Downloads continue in the background.")
+	_community_entry_button.focus_mode = Control.FOCUS_NONE
+	_community_entry_button.pressed.connect(open_community_packs)
+	_entry_layer.add_child(_community_entry_button)
 
 	# polled: there is no hook into the game's screen changes, and they all go
 	# through primary_capsule anyway.
@@ -1389,12 +1426,21 @@ func _build_the_way_in() -> void:
 
 func _place_entry_button() -> void:
 	if not is_instance_valid(_entry_button): return
+	_try_attach_extras_button()
 	_entry_button.visible = can_open_lobby()
+	_community_entry_button.visible = _entry_button.visible
 	if not _entry_button.visible: return
 	_entry_button.size = _entry_button.get_combined_minimum_size()
 	var view: Vector2 = _entry_layer.get_viewport().get_visible_rect().size
 	_entry_button.position = Vector2(
 		view.x - _entry_button.size.x - ENTRY_INSET.x, ENTRY_INSET.y)
+	var queued: int = community_pack_downloads.active_count()
+	_community_entry_button.text = (
+		"COMMUNITY PACKS  (%d)" % queued if queued > 0 else "COMMUNITY PACKS")
+	_community_entry_button.size = _community_entry_button.get_combined_minimum_size()
+	_community_entry_button.position = Vector2(
+		view.x - _community_entry_button.size.x - ENTRY_INSET.x,
+		_entry_button.position.y + _entry_button.size.y + 8)
 
 
 # menus only. CreateLobby frees everything under primary_capsule, so F9 mid-show
@@ -1419,6 +1465,75 @@ func open_lobby() -> void:
 	M.world.CreateLobby()
 
 
+func open_community_packs() -> void:
+	if is_instance_valid(_community_browser): return
+	log_net("opening the community pack browser")
+	_community_layer = CanvasLayer.new()
+	_community_layer.layer = 192
+	add_child(_community_layer)
+	_community_browser = preload("res://net/community_pack_browser.gd").new()
+	_community_browser.closed.connect(_close_community_packs)
+	_community_layer.add_child(_community_browser)
+
+
+func _close_community_packs() -> void:
+	if is_instance_valid(_community_layer): _community_layer.queue_free()
+	_community_browser = null
+	_community_layer = null
+
+
+func community_pack_library_changed() -> void:
+	_manifest_cache.clear()
+	if is_online(): manifests[my_id()] = voice_pack_manifest()
+	_place_entry_button.call_deferred()
+
+
+# The purchased game's source is intentionally not kept in this repository, so
+# there is no versioned Extras patch to anchor this button to yet. Both supported
+# builds do name the Extras scene, though. Insert into its largest direct button
+# container when it is present and fail closed if the layout is unfamiliar.
+# The lobby link below remains the reliable fallback until this has been checked
+# against retained 0.5.1 and 0.5.2 decompiles.
+func _try_attach_extras_button() -> void:
+	if is_instance_valid(_extras_button): return
+	if not get_tree().get_root().has_node("World"): return
+	var capsule: Node = M.world.primary_capsule
+	if capsule == null: return
+	var extras_root: Node
+	var stack: Array[Node] = []
+	for child: Node in capsule.get_children(): stack.append(child)
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		var clue: String = (node.scene_file_path + " " + node.name).to_lower()
+		if clue.contains("extra"):
+			extras_root = node
+			break
+		for child: Node in node.get_children(): stack.append(child)
+	if extras_root == null: return
+
+	var best: Container
+	var best_buttons: int = 1
+	stack.clear()
+	stack.append(extras_root)
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is Container:
+			var count: int = 0
+			for child: Node in node.get_children():
+				if child is Button: count += 1
+			if count > best_buttons:
+				best = node
+				best_buttons = count
+		for child: Node in node.get_children(): stack.append(child)
+	if best == null: return
+	_extras_button = Button.new()
+	_extras_button.text = "COMMUNITY PACKS"
+	_extras_button.tooltip_text = "Browse and safely install community Dub Mode packs."
+	_extras_button.focus_mode = Control.FOCUS_NONE
+	_extras_button.pressed.connect(open_community_packs)
+	best.add_child(_extras_button)
+
+
 # on Net rather than world.gd: this is in the tree from startup, and _input runs
 # ahead of the focused control that used to swallow the key.
 func _input(event: InputEvent) -> void:
@@ -1433,6 +1548,14 @@ func _input(event: InputEvent) -> void:
 
 
 func _ready() -> void:
+	community_pack_downloads = preload("res://net/community_pack_queue.gd").new()
+	community_pack_downloads.name = "CommunityPackDownloads"
+	add_child(community_pack_downloads)
+	community_pack_downloads.configure(self)
+	pack_sync = preload("res://net/pack_sync.gd").new()
+	pack_sync.name = "PackSync"
+	add_child(pack_sync)
+	pack_sync.configure(self)
 	# CONNECT_DEFERRED for the same reason the lobby uses it: these fire from
 	# inside the multiplayer poll. Loading a pack and swapping the scene from in
 	# there is what stranded joiners on the lobby screen while the host played on.
