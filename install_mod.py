@@ -26,7 +26,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 MOD = HERE / "mod"
 
-SUPPORTED_VERSIONS = ["0.5.1", "0.5.2"]
+SUPPORTED_VERSIONS = ["0.5.1", "0.5.2", "0.5.3"]
 GAME_VERSION = " or ".join(SUPPORTED_VERSIONS)
 
 KNOWN_GAME_SIZES = {
@@ -35,6 +35,8 @@ KNOWN_GAME_SIZES = {
     199462432: "0.5.2 dev-2 compatibility build",
     208463056: "0.5.2 compatibility build",
     208462000: "0.5.2 standard build",
+    208741312: "0.5.3 standard build",
+    208741456: "0.5.3 compatibility build",
 }
 
 GODOT_VERSION = "4.4.1-stable"
@@ -687,11 +689,12 @@ def patch_set_for(version: str) -> list[Path]:
         sorted(version_dir.glob("*.patch"))
 
 
-def apply_mod(work: Path) -> None:
+def apply_mod(work: Path, forced_version: str = "") -> None:
     if (work / "net" / "net_manager.gd").exists():
         raise Failed("this project already contains the mod")
 
-    version = detect_version(work)
+    """ Version 0.5.3 for some reason reports as version 0.5.2 in the project, so the right version has to be forced. """
+    version = forced_version or detect_version(work)
     say("mod", f"project reports version {version}")
 
     say("mod", f"repaired {repair_node_paths(work)} decompiler node-path artifacts")
@@ -890,16 +893,21 @@ def main(argv: list[str]) -> int:
     cache = Path(args.cache)
     work = Path(args.work)
 
+    exe = Path(args.game_exe) if args.game_exe else choose_game_exe()
+    check_game_exe(exe)
+    
+    """ Version 0.5.3 for some reason reports as version 0.5.2 in the project, so the right version has to be forced. """
+    forced_version = None
+    if exe.stat().st_size in (208741312, 208741456):
+        forced_version = "0.5.3"
+    
     if args.project:
         work = Path(args.project)
         if not (work / "project.godot").is_file():
             raise Failed(f"{work} is not a Godot project")
-        apply_mod(work)
+        apply_mod(work, forced_version or "")
         print(f"\nPatched {work}. Open it in Godot {GODOT_VERSION} and export.")
         return 0
-
-    exe = Path(args.game_exe) if args.game_exe else choose_game_exe()
-    check_game_exe(exe)
 
     say("1/5", "getting gdRE Tools")
     gdre = get_gdre(cache, args.gdre)
@@ -908,7 +916,7 @@ def main(argv: list[str]) -> int:
     decompile(gdre, exe, work)
 
     say("3/5", "applying the multiplayer mod")
-    apply_mod(work)
+    apply_mod(work, forced_version or "")
 
     say("4/5", "getting Godot and export templates")
     godot = get_godot(cache, args.godot)
