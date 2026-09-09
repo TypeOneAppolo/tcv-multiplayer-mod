@@ -687,7 +687,7 @@ def patch_set_for(version: str) -> list[Path]:
         sorted(version_dir.glob("*.patch"))
 
 
-def apply_mod(work: Path) -> None:
+def apply_mod(work: Path, custom_template: Path | None = None) -> None:
     if (work / "net" / "net_manager.gd").exists():
         raise Failed("this project already contains the mod")
 
@@ -710,11 +710,11 @@ def apply_mod(work: Path) -> None:
     say("mod", f"patched {count} game scripts")
 
     patch_project_godot(work)
-    write_export_preset(work)
+    write_export_preset(work, custom_template)
     say("mod", "registered the Net autoload and export preset")
 
 
-def write_export_preset(work: Path) -> None:
+def write_export_preset(work: Path, custom_template: Path | None = None) -> None:
     """The exporter is told where to put the build on the command line, so this
     path only matters to a modder who opens the project and hits Export. Stamp
     the version on it there too rather than leaving them the one name that says
@@ -723,7 +723,41 @@ def write_export_preset(work: Path) -> None:
     if MOD_VERSION:
         text = text.replace(f'export_path="{OUTPUT_STEM}.exe"',
                             f'export_path="{DEFAULT_OUTPUT}"', 1)
+    if custom_template is not None:
+        template_path = custom_template.resolve().as_posix().replace('"', '\\"')
+        text = text.replace('custom_template/release=""',
+                            f'custom_template/release="{template_path}"', 1)
     write_text(work / "export_presets.cfg", text)
+
+
+def extract_game_template(exe: Path, dest: Path) -> Path:
+    """Keep the game's custom Godot runtime and discard its embedded PCK."""
+    footer_size = 12
+    with open(exe, "rb") as source:
+        source.seek(-footer_size, os.SEEK_END)
+        pck_size = int.from_bytes(source.read(8), "little")
+        if source.read(4) != b"GDPC":
+            raise Failed("game exe has no embedded Godot PCK footer")
+        engine_size = exe.stat().st_size - pck_size - footer_size
+        if engine_size <= 0:
+            raise Failed("game exe has an invalid embedded PCK size")
+        source.seek(engine_size)
+        if source.read(4) != b"GDPC":
+            raise Failed("game exe's embedded PCK offset is invalid")
+        source.seek(0)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        with open(tmp, "wb") as target:
+            remaining = engine_size
+            while remaining:
+                chunk = source.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    raise Failed("game exe ended while extracting its engine")
+                target.write(chunk)
+                remaining -= len(chunk)
+    tmp.replace(dest)
+    say("mod", f"preserving the game's custom engine ({engine_size // 1048576} MB)")
+    return dest
 
 
 def powershell(script: str, timeout: int = 30) -> str:
@@ -908,7 +942,8 @@ def main(argv: list[str]) -> int:
     decompile(gdre, exe, work)
 
     say("3/5", "applying the multiplayer mod")
-    apply_mod(work)
+    custom_template = extract_game_template(exe, cache / "game-custom-template.exe")
+    apply_mod(work, custom_template)
 
     say("4/5", "getting Godot and export templates")
     godot = get_godot(cache, args.godot)
