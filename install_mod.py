@@ -635,7 +635,13 @@ def ensure_templates(cache: Path) -> None:
 
 def decompile(gdre: Path, exe: Path, work: Path) -> None:
     if work.exists():
-        shutil.rmtree(work)
+        try:
+            shutil.rmtree(work)
+        except OSError as exc:
+            raise Failed(
+                f"could not clear the scratch folder {work}\n"
+                "  Close any Godot editor or game using that folder, then try again."
+            ) from exc
     work.mkdir(parents=True)
     run([str(gdre), "--headless", f"--recover={exe}", f"--output-dir={work}"],
         "decompiling the game")
